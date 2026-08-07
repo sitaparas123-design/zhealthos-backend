@@ -1,0 +1,923 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  CLINIC_ADMIN
+  PRACTITIONER
+  SALES_EXECUTIVE
+  PATIENT
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+model User {
+  id           String       @id @default(uuid())
+  displayId    String?      @unique
+  email        String       @unique
+  passwordHash String
+  name         String
+  phone        String?
+  avatarUrl    String?      @db.Text
+  profileData  Json?
+  role         Role         @default(CLINIC_ADMIN)
+  status       UserStatus   @default(ACTIVE)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  refreshTokens RefreshToken[]
+  auditLogs     AuditLog[]
+  practitioner  Practitioner?
+  patient       Patient?
+  userBranches  UserBranch[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique @db.VarChar(500)
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
+model Clinic {
+  id            String   @id @default(uuid())
+  displayId     String?  @unique
+  name          String
+  email         String?
+  phone         String?
+  address       String?
+  logoUrl       String?
+  contactPerson String?
+  website       String?
+  country       String?
+  state         String?
+  salesperson   String?
+  referral      String?
+  staffCount    Int?     @default(1)
+  patientsCount Int?     @default(0)
+  revenue       Float?   @default(0)
+  tier          String?  @default("Basic")
+  status        String   @default("Active")
+  featureFlags  Json?
+  aiUsageCount  Int?     @default(0)
+  aiUsageLimit  Int?     @default(200)
+  lastBillingReset DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  branches      Branch[]
+  subscriptions Subscription[]
+
+  @@map("clinics")
+}
+
+model Branch {
+  id            String   @id @default(uuid())
+  clinicId      String?
+  name          String
+  joinDate      String?
+  email         String?
+  phone         String?
+  address       String?
+  timezone      String   @default("AEDT")
+  businessHours Json?
+  status        String   @default("Active")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  clinic       Clinic?        @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  userBranches UserBranch[]
+  appointments Appointment[]
+
+  @@map("branches")
+}
+
+model UserBranch {
+  userId   String
+  branchId String
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@id([userId, branchId])
+  @@map("user_branches")
+}
+
+model Practitioner {
+  id               String   @id @default(uuid())
+  clinicId         String?
+  userId           String?  @unique
+  name             String
+  specialty        String
+  color            String   @default("#8C4BFF")
+  email            String   @unique
+  phone            String?
+  status           String   @default("Active")
+  joinDate         String?
+  assignedBranches Json?
+  qualifications   Json?
+  bio              String?  @db.Text
+  consultationFee  Float    @default(0.0)
+  availability     Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  appointments Appointment[]
+
+  @@map("practitioners")
+}
+
+model Patient {
+  id                    String   @id @default(uuid())
+  displayId             String?  @unique
+  userId                String?  @unique
+  fullName              String
+  dob                   String?
+  gender                String?
+  email                 String?
+  phone                 String?
+  address               String?
+  city                  String?
+  state                 String?
+  postcode              String?
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  emergencyRelation     String?
+  gpName                String?
+  gpClinic              String?
+  gpPhone               String?
+  medicareNumber        String?
+  medicareRef           String?
+  medicareExpiry        String?
+  ndisNumber            String?
+  privateHealthFund     String?
+  phiMemberNum          String?
+  notes                 String?  @db.Text
+  sessionsUsed          Int      @default(0)
+  sessionsAllocated     Int      @default(10)
+  status                String   @default("active")
+  tags                  Json?
+  diagnosis             Json?
+  alerts                String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  appointments Appointment[]
+  invoices     Invoice[]
+  outcomeMeasures PatientOutcomeMeasure[]
+  progressTrends  PatientProgressTrend[]
+  forms           PatientForm[]
+  fundingAccounts PatientFundingAccount[]
+  claims          PatientClaim[]
+  healthShares    PatientHealthShare[]
+  patientInvoices PatientInvoice[]
+
+  @@map("patients")
+}
+
+model Waitlist {
+  id                    String   @id @default(uuid())
+  clientName            String
+  dob                   String?
+  contactNumber         String?
+  address               String?
+  preferredPractitioner String?
+  preferredDate         String?
+  dateAdded             String?
+  appointmentType       String?  @default("Initial Assessment")
+  status                String   @default("Waiting")
+  branch                String?
+  createdAt             DateTime @default(now())
+
+  @@map("waitlists")
+}
+
+model Appointment {
+  id               String   @id @default(uuid())
+  displayId        String?  @unique
+  patientId        String?
+  patientName      String
+  practitionerId   String?
+  practitionerName String
+  branchId         String?
+  branchName       String?
+  serviceName      String?
+  date             String
+  startTime        String
+  endTime          String
+  status           String   @default("Scheduled")
+  location         String?  @default("Melbourne Clinic")
+  room             String?  @default("Room A")
+  notes            String?  @db.Text
+  fee              Float    @default(0.0)
+  isPaid           Boolean  @default(false)
+  travelDetails    Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  patient      Patient?      @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  practitioner Practitioner? @relation(fields: [practitionerId], references: [id], onDelete: SetNull)
+  branch       Branch?       @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
+  @@map("appointments")
+}
+
+model Invoice {
+  id               String   @id @default(uuid())
+  displayId        String?  @unique
+  invoiceNumber    String?
+  patientId        String?
+  patientName      String?
+  clientName       String?
+  recipient        String?
+  practitionerName String?
+  service          String?
+  issueDate        String?
+  dueDate          String?
+  amount           Float    @default(0.0)
+  due              Float    @default(0.0)
+  status           String   @default("Draft")
+  sentStatus       String   @default("Not Sent")
+  items            Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  patient Patient? @relation(fields: [patientId], references: [id], onDelete: SetNull)
+
+  @@map("invoices")
+}
+
+model Payment {
+  id               String   @id @default(uuid())
+  receiptNumber    String   @unique
+  clientName       String
+  amount           Float    @default(0.0)
+  paymentDate      String
+  paymentMethod    String   @default("Stripe / Credit Card")
+  invoiceReference String?
+  status           String   @default("Successful (Paid)")
+  transactionId    String?
+  patientId        String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@map("payments")
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  clinicId    String?
+  displayId   String?  @unique
+  name        String
+  category    String?
+  description String?
+  itemCode    String?
+  vendor      String?
+  tax         String?  @default("GST Free Income")
+  xeroAccount String?  @default("200 - Sales")
+  price       Float    @default(0.0)
+  stock       Int      @default(0)
+  archived    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("products")
+}
+
+model Document {
+  id          String   @id @default(uuid())
+  name        String
+  patientName String
+  sentTo      String?
+  uploadBy    String   @default("Clinic Admin")
+  date        String
+  type        String   @default("Assessment")
+  status      String   @default("Active")
+  patientId   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("documents")
+}
+
+model BodyChartTemplate {
+  id              String   @id @default(uuid())
+  practitionerId  String?
+  name            String
+  description     String?
+  thumbnailUrl    String?
+  canvasData      Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("body_chart_templates")
+}
+
+
+model SalesUser {
+  id             String   @id @default(uuid())
+  displayId      String?  @unique
+  name           String
+  email          String   @unique
+  phone          String?
+  territory      String?  @default("General Platform")
+  tier           String?  @default("Senior Regional Tier")
+  commissionRate Float    @default(10.0)
+  commission     String?  @default("10% recurring")
+  clinicsCount   Int      @default(0)
+  pipelineCount  Int      @default(0)
+  lastActivity   String?  @default("Recently")
+  status         String   @default("Active")
+  avatar         String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("sales_users")
+}
+
+model Affiliate {
+  id             String   @id @default(uuid())
+  displayId      String?  @unique
+  partner        String
+  rep            String
+  commissionRate String   @default("15%")
+  referralsCount Int      @default(0)
+  totalPayout    Float    @default(0.0)
+  status         String   @default("Active")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("affiliates")
+}
+
+model SalesLead {
+  id            String   @id @default(uuid())
+  displayId     String?  @unique
+  companyName   String
+  contactPerson String
+  email         String
+  phone         String?
+  status        String   @default("New")
+  value         Float    @default(0.0)
+  assignedTo    String?
+  territory     String?  @default("General Platform")
+  tier          String?  @default("Basic")
+  stage         String?  @default("Lead Registered")
+  notes         String?  @db.Text
+  history       Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("sales_leads")
+}
+
+model SalesTask {
+  id          String   @id @default(uuid())
+  displayId   String?  @unique
+  title       String
+  category    String?  @default("Calls")
+  leadName    String?
+  dueDate     String?
+  priority    String   @default("Medium")
+  status      String   @default("Pending")
+  assignedTo  String?
+  notes       String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("sales_tasks")
+}
+
+model SalesCalendarEvent {
+  id          String   @id @default(uuid())
+  displayId   String?  @unique
+  title       String
+  date        String
+  time        String
+  clinic      String
+  contact     String?
+  type        String   @default("Demo")
+  stage       String?  @default("Demo Scheduled")
+  notes       String?  @db.Text
+  status      String   @default("Scheduled")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("sales_calendar_events")
+}
+
+model SalesMessage {
+  id        String   @id @default(uuid())
+  sender    String
+  recipient String   @default("Sales Team")
+  text      String   @db.Text
+  timestamp String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@map("sales_messages")
+}
+
+
+model Subscription {
+  id              String   @id @default(uuid())
+  displayId       String?  @unique
+  clinicId        String?
+  clinicName      String
+  plan            String
+  billingCycle    String   @default("Monthly")
+  amount          Float
+  status          String   @default("Active")
+  nextBillingDate String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  clinic Clinic? @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+
+  @@map("subscriptions")
+}
+
+model FormTemplate {
+  id           String   @id @default(uuid())
+  name         String
+  category     String   @default("Assessment")
+  lastModified String
+  createdAt    DateTime @default(now())
+
+  @@map("form_templates")
+}
+
+model LetterTemplate {
+  id        String   @id @default(uuid())
+  name      String
+  category  String   @default("Referrals")
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+
+  @@map("letter_templates")
+}
+
+model NoteTemplate {
+  id        String   @id @default(uuid())
+  name      String
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+
+  @@map("note_templates")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  displayId String?  @unique
+  category  String   @default("General")
+  action    String
+  actor     String   @default("System")
+  role      String?  @default("Admin")
+  target    String?
+  ip        String?  @default("10.42.18.1")
+  severity  String   @default("Info")
+  userId    String?
+  userName  String?
+  userRole  String?
+  module    String?
+  details   String?  @db.Text
+  ipAddress String?
+  timestamp DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("audit_logs")
+}
+
+model ComplianceAlert {
+  id          String   @id @default(uuid())
+  displayId   String?  @unique
+  category    String
+  description String
+  severity    String   @default("Warning")
+  status      String   @default("Active")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("compliance_alerts")
+}
+
+model GovernanceLog {
+  id        String   @id @default(uuid())
+  displayId String?  @unique
+  request   String
+  requester String
+  role      String   @default("Super Admin")
+  status    String   @default("Completed")
+  type      String   @default("CSV")
+  createdAt DateTime @default(now())
+
+  @@map("governance_logs")
+}
+
+model SupportTicket {
+  id        String   @id @default(uuid())
+  displayId String?  @unique
+  desc      String
+  clinic    String
+  email     String
+  category  String   @default("Technical")
+  priority  String   @default("Medium")
+  status    String   @default("Open")
+  created   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("support_tickets")
+}
+
+model SupportBug {
+  id        String   @id @default(uuid())
+  displayId String?  @unique
+  title     String
+  category  String   @default("Auth")
+  severity  String   @default("High")
+  status    String   @default("New")
+  clinic    String   @default("System")
+  reporter  String   @default("Support Agent")
+  date      String?
+  steps     String?  @db.Text
+  affected  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("support_bugs")
+}
+
+model SupportFeature {
+  id        String   @id @default(uuid())
+  displayId String?  @unique
+  title     String
+  desc      String   @db.Text
+  category  String   @default("General")
+  status    String   @default("Under Review")
+  clinic    String   @default("System")
+  submitter String   @default("Support Agent")
+  date      String?
+  votes     Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("support_features")
+}
+
+model SupportChatMessage {
+  id        String   @id @default(uuid())
+  chatId    String
+  name      String
+  clinic    String
+  sender    String
+  text      String   @db.Text
+  time      String?
+  unread    Int      @default(0)
+  status    String   @default("Active")
+  createdAt DateTime @default(now())
+
+  @@map("support_chat_messages")
+}
+
+model SupportClinicHistory {
+  id              String   @id @default(uuid())
+  displayId       String?  @unique
+  clinic          String
+  ticketsResolved Int      @default(0)
+  bugsReported    Int      @default(0)
+  lastContact     String?
+  satisfaction    String   @default("95%")
+  createdAt       DateTime @default(now())
+
+  @@map("support_clinic_history")
+}
+
+model Announcement {
+  id        String   @id @default(uuid())
+  clinicId  String?
+  clinicName String?
+  text      String   @db.Text
+  createdAt DateTime @default(now())
+
+  @@map("announcements")
+}
+
+model ServiceItem {
+  id          String   @id @default(uuid())
+  clinicId    String?
+  name        String
+  category    String   @default("Therapeutic Supports")
+  code        String?
+  ndisCode    String?
+  color       String?  @default("#8C4BFF")
+  price       Float    @default(0.0)
+  duration    Int      @default(30)
+  taxable     Boolean  @default(false)
+  archived    Boolean  @default(false)
+  description String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("service_items")
+}
+
+model CancellationReason {
+  id        String   @id @default(uuid())
+  reason    String
+  active    Boolean  @default(true)
+  archived  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@map("cancellation_reasons")
+}
+
+model ClientTag {
+  id        String   @id @default(uuid())
+  name      String
+  color     String   @default("#8C4BFF")
+  iconName  String   @default("TagOutlined")
+  createdAt DateTime @default(now())
+
+  @@map("client_tags")
+}
+
+model DataManagementLog {
+  id               String   @id @default(uuid())
+  displayId        String?  @unique
+  type             String
+  fileName         String
+  target           String
+  status           String   @default("Success")
+  recordsProcessed Int      @default(0)
+  errors           Json?
+  timestamp        DateTime @default(now())
+  createdAt        DateTime @default(now())
+
+  @@map("data_management_logs")
+}
+
+model Contact {
+  id                String   @id @default(uuid())
+  displayId         String?  @unique
+  name              String
+  type              String   @default("Other")
+  title             String?
+  occupation        String?
+  company           String?
+  email             String?
+  mobileNumber      String?
+  workPhone         String?
+  secondaryPhone    String?
+  address           String?
+  city              String?
+  state             String?
+  postcode          String?
+  country           String?
+  notes             String?  @db.Text
+  isMedicalReferrer Boolean  @default(false)
+  associatedClients Json?
+  noteLogs          Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("contacts")
+}
+
+model TreatmentPlan {
+  id              String   @id @default(uuid())
+  displayId       String?  @unique
+  patientId       String?
+  condition       String
+  practitioner    String
+  stage           String
+  overallProgress Int      @default(0)
+  status          String   @default("Active")
+  goals           Json?
+  timeline        Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("treatment_plans")
+}
+
+model PrescribedExercise {
+  id              String   @id @default(uuid())
+  patientId       String?
+  treatmentPlanId String?
+  name            String
+  reps            String
+  note            String?
+  done            Boolean  @default(false)
+  img             String?  @db.Text
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("prescribed_exercises")
+}
+
+model PatientOutcomeMeasure {
+  id          String    @id @default(uuid())
+  patientId   String?
+  clinicId    String?
+  name        String
+  type        String
+  prevScore   String?
+  score       String
+  status      String    @default("Improved")
+  verifiedBy  String?
+  verifiedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  patient     Patient?  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, createdAt])
+  @@map("patient_outcome_measures")
+}
+
+model PatientProgressTrend {
+  id        String   @id @default(uuid())
+  patientId String?
+  clinicId  String?
+  month     String
+  pain      Int      @default(0)
+  function  Int      @default(0)
+  mobility  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  patient   Patient? @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, createdAt])
+  @@map("patient_progress_trends")
+}
+
+model PatientForm {
+  id          String    @id @default(uuid())
+  patientId   String?
+  clinicId    String?
+  name        String
+  category    String
+  status      String    @default("Pending")
+  formData    Json?
+  submittedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  patient     Patient?  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, createdAt])
+  @@map("patient_forms")
+}
+
+model PatientFundingAccount {
+  id        String   @id @default(uuid())
+  patientId String?
+  clinicId  String?
+  type      String
+  remaining String
+  percent   Int      @default(0)
+  status    String   @default("Active")
+  used      String
+  total     String
+  expiry    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  patient   Patient? @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, createdAt])
+  @@map("patient_funding_accounts")
+}
+
+model PatientClaim {
+  id        String   @id @default(uuid())
+  displayId String?  @unique
+  patientId String?
+  clinicId  String?
+  service   String
+  date      String
+  amount    String
+  funding   String   @default("NDIS")
+  status    String   @default("Approved")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  patient   Patient? @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, createdAt])
+  @@map("patient_claims")
+}
+
+model PatientHealthShare {
+  id           String   @id @default(uuid())
+  patientId    String?
+  clinicId     String?
+  clinic       String
+  practitioner String
+  level        String   @default("Limited Access")
+  status       String   @default("Active")
+  grantedDate  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  patient      Patient? @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, createdAt])
+  @@map("patient_health_shares")
+}
+
+model PatientInvoice {
+  id            String    @id @default(uuid())
+  displayId     String?   @unique
+  patientId     String?
+  clinicId      String?
+  service       String
+  practitioner  String
+  due           String
+  amount        Float
+  status        String    @default("Unpaid")
+  paymentMethod String?
+  paidAt        DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  patient       Patient?  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, createdAt])
+  @@map("patient_invoices")
+}
+
+model SystemSetting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("system_settings")
+}
+
+model ConsultationNote {
+  id               String   @id @default(uuid())
+  displayId        String?  @unique
+  patientId        String?
+  patientName      String
+  practitionerId   String?
+  practitionerName String?
+  profession       String?  @default("Physiotherapist")
+  appointmentId    String?
+  notes            String?  @db.Text
+  soap             Json?
+  status           String   @default("Draft")
+  date             String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([patientId, date])
+  @@map("consultation_notes")
+}
+
+
+
+
+
+
+
+
+
+
+model CareTeamMessage {
+  id             String   @id @default(uuid())
+  practitionerId String?
+  patientId      String?
+  sender         String   // 'patient' | 'doctor' | 'reception' | 'billing' | 'support'
+  doctorName     String?
+  text           String   @db.Text
+  category       String   @default("General Questions")
+  isRead         Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@map("care_team_messages")
+}
