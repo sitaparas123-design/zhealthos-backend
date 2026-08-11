@@ -202,7 +202,7 @@ const updateAppointment = async (req, res, next) => {
     if (notes !== undefined) updateData.notes = notes
     if (fee !== undefined) updateData.fee = parseFloat(fee) || 0.0
     if (isPaid !== undefined) updateData.isPaid = Boolean(isPaid)
-    
+
     if (travelDetails !== undefined || travel !== undefined) {
       const t = travelDetails || travel
       updateData.travelDetails = t ? (typeof t === 'object' ? t : (typeof t === 'string' ? JSON.parse(t) : null)) : null
@@ -341,7 +341,7 @@ const getPatients = async (req, res, next) => {
       include: { user: { select: { id: true, role: true } } },
       orderBy: { createdAt: 'desc' }
     })
-    
+
     // Exclude staff/admin accounts mistakenly linked to patient table (preserve valid patients with userId === null)
     patients = patients.filter(p => !p.user || p.user.role === 'PATIENT')
 
@@ -1046,11 +1046,11 @@ async function getDashboardStats(req, res, next) {
     const weekEnd = new Date(weekStart)
     weekEnd.setDate(weekStart.getDate() + 6)
     const weekStartStr = weekStart.toISOString().split('T')[0]
-    const weekEndStr   = weekEnd.toISOString().split('T')[0]
+    const weekEndStr = weekEnd.toISOString().split('T')[0]
 
     // Month range
     const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]
-    const monthEnd   = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0]
+    const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0]
 
     // Resolve clinicId and practitionerId dynamically for strict multi-tenant isolation
     const userClinicId = await getClinicIdFromReq(req)
@@ -1432,7 +1432,7 @@ async function getPrescribedExercises(req, res, next) {
         list = dbList.map(item => {
           const inMemMatch = inMemoryPrescribedExercises.find(m => m.id === item.id)
           const matchedPatient = patients.find(p => p.id === item.patientId || p.name === item.patientId)
-          
+
           let pName = inMemMatch?.patientName
           if (matchedPatient) {
             pName = matchedPatient.name || `${matchedPatient.firstName || ''} ${matchedPatient.lastName || ''}`.trim()
