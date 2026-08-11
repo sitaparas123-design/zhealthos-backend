@@ -148,6 +148,7 @@ model Practitioner {
 model Patient {
   id                    String   @id @default(uuid())
   displayId             String?  @unique
+  clinicId              String?
   userId                String?  @unique
   fullName              String
   dob                   String?
@@ -196,6 +197,7 @@ model Patient {
 
 model Waitlist {
   id                    String   @id @default(uuid())
+  clinicId              String?
   clientName            String
   dob                   String?
   contactNumber         String?
@@ -214,6 +216,7 @@ model Waitlist {
 model Appointment {
   id               String   @id @default(uuid())
   displayId        String?  @unique
+  clinicId         String?
   patientId        String?
   patientName      String
   practitionerId   String?
@@ -244,6 +247,7 @@ model Appointment {
 model Invoice {
   id               String   @id @default(uuid())
   displayId        String?  @unique
+  clinicId         String?
   invoiceNumber    String?
   patientId        String?
   patientName      String?
@@ -268,6 +272,7 @@ model Invoice {
 
 model Payment {
   id               String   @id @default(uuid())
+  clinicId         String?
   receiptNumber    String   @unique
   clientName       String
   amount           Float    @default(0.0)
@@ -277,6 +282,7 @@ model Payment {
   status           String   @default("Successful (Paid)")
   transactionId    String?
   patientId        String?
+  practitionerId   String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -304,17 +310,19 @@ model Product {
 }
 
 model Document {
-  id          String   @id @default(uuid())
-  name        String
-  patientName String
-  sentTo      String?
-  uploadBy    String   @default("Clinic Admin")
-  date        String
-  type        String   @default("Assessment")
-  status      String   @default("Active")
-  patientId   String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id             String   @id @default(uuid())
+  clinicId       String?
+  practitionerId String?
+  name           String
+  patientName    String
+  sentTo         String?
+  uploadBy       String   @default("Clinic Admin")
+  date           String
+  type           String   @default("Assessment")
+  status         String   @default("Active")
+  patientId      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   @@map("documents")
 }
@@ -458,6 +466,7 @@ model Subscription {
 
 model FormTemplate {
   id           String   @id @default(uuid())
+  clinicId     String?
   name         String
   category     String   @default("Assessment")
   lastModified String
@@ -468,6 +477,7 @@ model FormTemplate {
 
 model LetterTemplate {
   id        String   @id @default(uuid())
+  clinicId  String?
   name      String
   category  String   @default("Referrals")
   status    String   @default("active")
@@ -478,6 +488,7 @@ model LetterTemplate {
 
 model NoteTemplate {
   id        String   @id @default(uuid())
+  clinicId  String?
   name      String
   content   String   @db.Text
   createdAt DateTime @default(now())
@@ -623,6 +634,19 @@ model Announcement {
   @@map("announcements")
 }
 
+model MessageBoardItem {
+  id         String   @id @default(uuid())
+  clinicId   String?
+  sender     String
+  senderRole String
+  message    String   @db.Text
+  taskRef    String?
+  createdAt  DateTime @default(now())
+
+  @@map("message_board_items")
+}
+
+
 model ServiceItem {
   id          String   @id @default(uuid())
   clinicId    String?
@@ -644,6 +668,7 @@ model ServiceItem {
 
 model CancellationReason {
   id        String   @id @default(uuid())
+  clinicId  String?
   reason    String
   active    Boolean  @default(true)
   archived  Boolean  @default(false)
@@ -654,6 +679,7 @@ model CancellationReason {
 
 model ClientTag {
   id        String   @id @default(uuid())
+  clinicId  String?
   name      String
   color     String   @default("#8C4BFF")
   iconName  String   @default("TagOutlined")
@@ -680,6 +706,7 @@ model DataManagementLog {
 model Contact {
   id                String   @id @default(uuid())
   displayId         String?  @unique
+  clinicId          String?
   name              String
   type              String   @default("Other")
   title             String?
@@ -882,6 +909,7 @@ model SystemSetting {
 model ConsultationNote {
   id               String   @id @default(uuid())
   displayId        String?  @unique
+  clinicId         String?
   patientId        String?
   patientName      String
   practitionerId   String?
@@ -896,6 +924,7 @@ model ConsultationNote {
   updatedAt        DateTime @updatedAt
 
   @@index([patientId, date])
+  @@index([clinicId, status])
   @@map("consultation_notes")
 }
 
@@ -920,4 +949,34 @@ model CareTeamMessage {
   createdAt      DateTime @default(now())
 
   @@map("care_team_messages")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  title     String
+  message   String   @db.Text
+  target    String   // 'SUPER_ADMIN', 'CLINIC_ADMIN', 'PRACTITIONER', 'SALES_EXECUTIVE', 'PATIENT', 'All', or user ID
+  type      String   @default("inbox") // 'inbox' or 'sent'
+  isRead    Boolean  @default(false)
+  userId    String?  // References user who owns or sent the notification
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([target, createdAt])
+  @@map("notifications")
+}
+
+model ApiKey {
+  id        String   @id @default(uuid())
+  clinicId  String?
+  userId    String?
+  name      String
+  token     String   @unique
+  created   String
+  lastUsed  String   @default("Never")
+  status    String   @default("Active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("api_keys")
 }

@@ -7,6 +7,8 @@ const clinicAdminRoutes = require('./modules/clinic-admin/clinic-admin.routes')
 const practitionerRoutes = require('./modules/practitioner/practitioner.routes')
 const salesRoutes = require('./modules/sales-executive/sales-executive.routes')
 const patientRoutes = require('./modules/patient/patient.routes')
+const aiRoutes = require('./modules/ai/ai.routes')
+const notificationRoutes = require('./modules/notification/notification.routes')
 
 // Health check endpoint
 router.get('/health', (req, res) => {
@@ -17,6 +19,9 @@ router.get('/health', (req, res) => {
   })
 })
 
+const authenticate = require('./middlewares/auth.middleware')
+const superAdminController = require('./modules/super-admin/super-admin.controller')
+
 // Mount modules
 router.use('/auth', authRoutes)
 router.use('/super-admin', superAdminRoutes)
@@ -24,5 +29,23 @@ router.use('/clinic-admin', clinicAdminRoutes)
 router.use('/practitioner', practitionerRoutes)
 router.use('/sales', salesRoutes)
 router.use('/patient', patientRoutes)
+router.use('/ai', aiRoutes)
+router.use('/notifications', notificationRoutes)
+
+// Shared Message Board routes for authenticated users
+router.get('/message-board', authenticate, superAdminController.getMessageBoardItems)
+router.post('/message-board', authenticate, superAdminController.createMessageBoardItem)
+router.delete('/message-board/:id', authenticate, superAdminController.deleteMessageBoardItem)
+
+// Notifications endpoint
+router.get('/notifications', (req, res) => {
+  res.json({
+    success: true,
+    data: [
+      { id: 'n1', title: 'System Updated', message: 'ZHealth OS software updated successfully.', date: 'Just now', read: false },
+      { id: 'n2', title: 'Waitlist Alert', message: 'Patient added to waitlist queue.', date: '10 mins ago', read: false }
+    ]
+  })
+})
 
 module.exports = router

@@ -316,16 +316,19 @@ const updateClinic = async (req, res, next) => {
 
     const fullAddress = address || (state || country ? `${state || ''} ${country || ''}`.trim() : undefined)
 
+    // 1. Fetch current clinic state before update
+    const existingClinic = await prisma.clinic.findUnique({ where: { id } }).catch(() => null)
+
     const clinic = await prisma.clinic.update({
       where: { id },
       data: {
-        ...(name && { name }),
-        ...(email && { email }),
-        ...((phone || contact) && { phone: phone || contact }),
+        ...(name && { name: name.trim() }),
+        ...(email && { email: email.toLowerCase().trim() }),
+        ...((phone || contact) && { phone: (phone || contact).trim() }),
         ...(fullAddress && { address: fullAddress }),
         ...((logoUrl || avatar) && { logoUrl: logoUrl || avatar }),
-        ...(contactPerson && { contactPerson }),
-        ...(website && { website }),
+        ...(contactPerson && { contactPerson: contactPerson.trim() }),
+        ...(website && { website: website.trim() }),
         ...(country && { country }),
         ...(state && { state }),
         ...(salesperson && { salesperson }),
@@ -338,14 +341,60 @@ const updateClinic = async (req, res, next) => {
       },
     })
 
-    // Sync updated name/contactPerson to matching user in users table
-    if (clinic.email) {
-      const syncName = contactPerson || (name ? `${name} Admin` : null)
-      if (syncName) {
-        await prisma.user.updateMany({
-          where: { email: clinic.email.toLowerCase() },
-          data: { name: syncName }
-        }).catch(() => null)
+    // 2. Sync updated email, name, and phone to matching login user(s) in users table
+    const oldEmail = existingClinic?.email?.toLowerCase()?.trim()
+    const newEmail = clinic.email?.toLowerCase()?.trim()
+
+    const userUpdatePayload = {}
+    if (newEmail) {
+      userUpdatePayload.email = newEmail
+    }
+    if (contactPerson || name) {
+      userUpdatePayload.name = (contactPerson || name).trim()
+    }
+    if (phone || contact) {
+      userUpdatePayload.phone = (phone || contact).trim()
+    }
+
+    if (Object.keys(userUpdatePayload).length > 0) {
+      let matchingUsers = []
+      if (oldEmail || newEmail) {
+        matchingUsers = await prisma.user.findMany({
+          where: {
+            OR: [
+              ...(oldEmail ? [{ email: oldEmail }] : []),
+              ...(newEmail ? [{ email: newEmail }] : []),
+            ]
+          }
+        }).catch(() => [])
+      }
+
+      const allClinicUsers = await prisma.user.findMany({
+        where: { role: 'CLINIC_ADMIN' }
+      }).catch(() => [])
+
+      const additionalUsers = allClinicUsers.filter(u => u.profileData && u.profileData.clinicId === id)
+      
+      const userIdsToUpdate = Array.from(new Set([
+        ...matchingUsers.map(u => u.id),
+        ...additionalUsers.map(u => u.id)
+      ]))
+
+      for (const uId of userIdsToUpdate) {
+        const currentUser = await prisma.user.findUnique({ where: { id: uId } })
+        const pData = (currentUser?.profileData && typeof currentUser.profileData === 'object') ? currentUser.profileData : {}
+        
+        await prisma.user.update({
+          where: { id: uId },
+          data: {
+            ...userUpdatePayload,
+            profileData: {
+              ...pData,
+              clinicId: clinic.id,
+              clinicName: clinic.name
+            }
+          }
+        }).catch(err => console.error('Error updating user table on clinic update:', err))
       }
     }
 
@@ -2634,9 +2683,151 @@ const updateSecurityControls = async (req, res, next) => {
   }
 }
 
+// Helper to resolve clinicId for Message Board tenant isolation
+const resolveTenantClinicId = async (user) => {
+  if (!user) return null
+  let clinicId = user.clinicId
+
+  if (!clinicId && user.profileData && typeof user.profileData === 'object' && user.profileData.clinicId) {
+    clinicId = user.profileData.clinicId
+  }
+
+  if (!clinicId && user.id) {
+    const userBranch = await prisma.userBranch.findFirst({
+      where: { userId: user.id },
+      include: { branch: true }
+    }).catch(() => null)
+    if (userBranch?.branch?.clinicId) {
+      clinicId = userBranch.branch.clinicId
+    }
+  }
+
+  if (!clinicId && user.email) {
+    const clinic = await prisma.clinic.findFirst({
+      where: { email: user.email.toLowerCase().trim() }
+    }).catch(() => null)
+    if (clinic) clinicId = clinic.id
+  }
+
+  if (!clinicId && user.id) {
+    const dbUser = await prisma.user.findUnique({ where: { id: user.id } }).catch(() => null)
+    if (dbUser?.profileData && dbUser.profileData.clinicId) {
+      clinicId = dbUser.profileData.clinicId
+    }
+  }
+
+  return clinicId
+}
+
+// Message Board & Task Communication Controllers (With Multi-Tenant Isolation)
+const getMessageBoardItems = async (req, res, next) => {
+  try {
+    const userRole = req.user?.role
+    const userClinicId = await resolveTenantClinicId(req.user)
+
+    let whereClause = {}
+    if (userRole === 'CLINIC_ADMIN' || userRole === 'PRACTITIONER') {
+      whereClause = {
+        OR: [
+          { senderRole: 'Super Admin' },
+          { senderRole: 'SUPER_ADMIN' },
+          ...(userClinicId ? [{ clinicId: userClinicId }] : [])
+        ]
+      }
+    } else if (userRole === 'SALES_EXECUTIVE') {
+      whereClause = {
+        OR: [
+          { senderRole: 'Super Admin' },
+          { senderRole: 'SUPER_ADMIN' }
+        ]
+      }
+    } else if (userRole === 'PATIENT') {
+      return res.json({ success: true, data: [] })
+    }
+
+    const items = await prisma.messageBoardItem.findMany({
+      where: whereClause,
+      orderBy: { createdAt: 'desc' },
+      take: 100
+    })
+
+    const formatted = items.map(item => ({
+      id: item.id,
+      sender: item.sender,
+      senderRole: item.senderRole,
+      message: item.message,
+      taskRef: item.taskRef,
+      clinicId: item.clinicId,
+      timestamp: new Date(item.createdAt).toLocaleString([], {
+        year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+      })
+    }))
+
+    res.json({ success: true, data: formatted })
+  } catch (err) {
+    next(err)
+  }
+}
+
+const createMessageBoardItem = async (req, res, next) => {
+  try {
+    const { message, taskRef, sender, senderRole, clinicId } = req.body
+    if (!message || !message.trim()) {
+      return res.status(400).json({ success: false, message: 'Message content is required' })
+    }
+
+    const userClinicId = await resolveTenantClinicId(req.user)
+
+    const effectiveSender = sender || req.user?.name || 'Super Admin'
+    const effectiveRole = senderRole || (req.user?.role === 'SUPER_ADMIN' ? 'Super Admin' : req.user?.role === 'PRACTITIONER' ? 'Practitioner' : 'Clinic Admin')
+    const effectiveClinicId = clinicId || userClinicId || null
+
+    const item = await prisma.messageBoardItem.create({
+      data: {
+        sender: effectiveSender,
+        senderRole: effectiveRole,
+        message: message.trim(),
+        taskRef: taskRef ? taskRef.trim() : null,
+        clinicId: effectiveClinicId
+      }
+    })
+
+    res.json({
+      success: true,
+      data: {
+        id: item.id,
+        sender: item.sender,
+        senderRole: item.senderRole,
+        message: item.message,
+        taskRef: item.taskRef,
+        clinicId: item.clinicId,
+        timestamp: new Date(item.createdAt).toLocaleString([], {
+          year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+        })
+      }
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+const deleteMessageBoardItem = async (req, res, next) => {
+  try {
+    const { id } = req.params
+    await prisma.messageBoardItem.delete({ where: { id } })
+    res.json({ success: true, message: 'Message deleted successfully' })
+  } catch (err) {
+    next(err)
+  }
+}
+
 module.exports = {
+  getMessageBoardItems,
+  createMessageBoardItem,
+  deleteMessageBoardItem,
   getClinics,
   createClinic,
+
   updateClinic,
   deleteClinic,
   updateClinicStatus,

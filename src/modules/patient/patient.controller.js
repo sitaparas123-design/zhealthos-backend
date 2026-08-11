@@ -340,14 +340,14 @@ const getCareTeam = async (req, res, next) => {
     const formatted = dbPractitioners.map((p, idx) => ({
       id: p.id,
       name: p.name,
-      specialty: p.specialty || 'Allied Health Practitioner',
-      clinic: 'Melbourne Allied Health',
-      contact: p.phone || '+61 412 100 001',
-      email: p.email || 'practitioner@clinic.com',
-      lastAppt: p.joinDate || '12 Jun 2026',
-      avatar: idx % 2 === 0
+      specialty: p.specialty || 'General Practitioner',
+      clinic: p.clinic || 'Main Clinic',
+      contact: p.phone || '',
+      email: p.email || '',
+      lastAppt: p.joinDate || '',
+      avatar: p.avatarUrl || (idx % 2 === 0
         ? 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150'
-        : 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150'
+        : 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150')
     }))
 
     res.json({ success: true, data: formatted })

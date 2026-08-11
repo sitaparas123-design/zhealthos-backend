@@ -8,7 +8,7 @@ const generateAccessToken = (payload) => {
 }
 
 const generateRefreshToken = (payload) => {
-  return jwt.sign(payload, jwtConfig.refreshSecret, {
+  return jwt.sign({ ...payload, nonce: Math.random().toString(36).substring(2) + Date.now() }, jwtConfig.refreshSecret, {
     expiresIn: jwtConfig.refreshExpiresIn,
   })
 }

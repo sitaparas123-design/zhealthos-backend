@@ -35,6 +35,11 @@ router.delete('/billing/invoices/:id', controller.deleteSubscriptionInvoice)
 router.get('/audit-logs', controller.getAuditLogs)
 router.post('/audit-logs', controller.createAuditLog)
 
+// Message Board & Task Communication
+router.get('/message-board', controller.getMessageBoardItems)
+router.post('/message-board', controller.createMessageBoardItem)
+router.delete('/message-board/:id', controller.deleteMessageBoardItem)
+
 // Compliance Alerts
 router.get('/compliance-alerts', controller.getComplianceAlerts)
 router.post('/compliance-alerts', controller.createComplianceAlert)
