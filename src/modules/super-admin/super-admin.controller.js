@@ -409,6 +409,11 @@ const deleteClinic = async (req, res, next) => {
 const getAdmins = async (req, res, next) => {
   try {
     const users = await prisma.user.findMany({
+      where: {
+        role: {
+          in: ['SUPER_ADMIN', 'CLINIC_ADMIN', 'SALES_EXECUTIVE']
+        }
+      },
       orderBy: { createdAt: 'desc' },
       include: {
         userBranches: {
