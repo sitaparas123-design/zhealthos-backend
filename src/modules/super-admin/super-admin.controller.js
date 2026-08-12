@@ -88,16 +88,7 @@ const createClinic = async (req, res, next) => {
 // Super Admin: Subscriptions management
 const getSubscriptions = async (req, res, next) => {
   try {
-    let subscriptions = await prisma.subscription.findMany({ orderBy: { createdAt: 'desc' } })
-    if (subscriptions.length === 0) {
-      const seedSubs = [
-        { displayId: 'SUB-000001', clinicName: 'Bayview Family Clinic', plan: 'Basic', billingCycle: 'Monthly', amount: 50.0, status: 'Active' },
-        { displayId: 'SUB-000002', clinicName: 'Melbourne Central Clinic', plan: 'Advanced', billingCycle: 'Monthly', amount: 50.0, status: 'Active' },
-        { displayId: 'SUB-000003', clinicName: 'Harbor Wellness Center', plan: 'Premium', billingCycle: 'Monthly', amount: 50.0, status: 'Active' },
-      ]
-      await prisma.subscription.createMany({ data: seedSubs }).catch(() => null)
-      subscriptions = await prisma.subscription.findMany({ orderBy: { createdAt: 'desc' } })
-    }
+    const subscriptions = await prisma.subscription.findMany({ orderBy: { createdAt: 'desc' } })
     res.json({ success: true, data: subscriptions })
   } catch (err) {
     next(err)
@@ -239,28 +230,9 @@ const updateInvoiceStatus = async (req, res, next) => {
 // Super Admin: System audit logs
 const getAuditLogs = async (req, res, next) => {
   try {
-    let logs = await prisma.auditLog.findMany({
+    const logs = await prisma.auditLog.findMany({
       orderBy: { timestamp: 'desc' },
     })
-
-    // Seed baseline audit logs if table is empty
-    if (logs.length === 0) {
-      const seedLogs = [
-        { displayId: 'AUD-000001', category: 'Billing', action: 'Subscription plan upgraded from Basic to Professional', actor: 'Sarah Chen', role: 'Admin', target: 'Bayview Family Clinic', ip: '10.42.18.7', severity: 'Info' },
-        { displayId: 'AUD-000002', category: 'Clinical Notes', action: 'Edited clinical note for patient #P-4821', actor: 'Dr. Amelia Park', role: 'Clinician', target: 'Patient P-4821 (Northside Dental)', ip: '10.42.18.22', severity: 'Warning' },
-        { displayId: 'AUD-000003', category: 'Permissions', action: 'Granted billing access to user', actor: 'Michael Ross', role: 'Super Admin', target: 'jane.doe@bayview.health (Bayview Family Clinic)', ip: '10.42.18.1', severity: 'Critical' },
-        { displayId: 'AUD-000004', category: 'Login Activity', action: 'Failed login attempt — 5 consecutive failures', actor: 'Unknown', role: 'Unknown', target: 'admin@sunrisepeds.com (Sunrise Pediatrics)', ip: '203.0.113.42', severity: 'Critical' },
-        { displayId: 'AUD-000005', category: 'Login Activity', action: 'New device sign-in from Chicago, USA', actor: 'David Okonkwo', role: 'Clinician', target: 'david.okonkwo@westend.health (Westend Wellness)', ip: '198.51.100.18', severity: 'Warning' },
-        { displayId: 'AUD-000006', category: 'Subscription', action: 'Subscription cancelled — effective end of cycle', actor: 'Priya Patel', role: 'Owner', target: 'Hillcrest Vision', ip: '10.42.18.55', severity: 'Warning' },
-        { displayId: 'AUD-000007', category: 'Billing', action: 'Payment method updated (Visa ending 4521)', actor: 'James Wilson', role: 'Admin', target: 'Greenfield Health', ip: '10.42.18.61', severity: 'Info' },
-        { displayId: 'AUD-000008', category: 'Clinical Notes', action: 'Deleted draft note (pre-finalization)', actor: 'Dr. Emily Rodriguez', role: 'Clinician', target: 'Patient P-5102 (Maplewood Dermatology)', ip: '10.42.18.33', severity: 'Info' },
-        { displayId: 'AUD-000009', category: 'Permissions', action: 'Revoked admin role from former employee', actor: 'Michael Ross', role: 'Super Admin', target: 'k.lee@cedarhill.health (Cedar Hill Clinic)', ip: '10.42.18.1', severity: 'Warning' },
-        { displayId: 'AUD-000010', category: 'Subscription', action: 'Add-on enabled: Advanced Analytics', actor: 'Sarah Chen', role: 'Admin', target: 'Riverstone Cardiology', ip: '10.42.18.7', severity: 'Info' },
-      ]
-
-      await prisma.auditLog.createMany({ data: seedLogs }).catch(() => null)
-      logs = await prisma.auditLog.findMany({ orderBy: { timestamp: 'desc' } })
-    }
 
     const formattedLogs = logs.map(log => {
       let target = log.target
@@ -963,21 +935,9 @@ const deleteSalesLead = async (req, res, next) => {
 // Super Admin: Get Compliance Alerts
 const getComplianceAlerts = async (req, res, next) => {
   try {
-    let alerts = await prisma.complianceAlert.findMany({
+    const alerts = await prisma.complianceAlert.findMany({
       orderBy: { createdAt: 'desc' },
     })
-
-    if (alerts.length === 0) {
-      const seedAlerts = [
-        { displayId: 'CA-000001', category: 'HIPAA Compliance', description: 'Patient record P-4821 accessed from unauthorized IP (185.220.101.4)', severity: 'Critical', status: 'Active' },
-        { displayId: 'CA-000002', category: 'Data Protection', description: 'Unencrypted backup volume detected in dev-staging node', severity: 'Warning', status: 'Active' },
-        { displayId: 'CA-000003', category: 'Access Control', description: '5 consecutive failed login attempts on admin account', severity: 'Critical', status: 'Resolved' },
-        { displayId: 'CA-000004', category: 'Retention Policy', description: 'Database logs older than 7 years auto-archived successfully', severity: 'Info', status: 'Resolved' },
-        { displayId: 'CA-000005', category: 'Clinical Integrity', description: '3 clinical notes pending practitioner signature for over 24 hours', severity: 'Warning', status: 'Active' },
-      ]
-      await prisma.complianceAlert.createMany({ data: seedAlerts }).catch(() => null)
-      alerts = await prisma.complianceAlert.findMany({ orderBy: { createdAt: 'desc' } })
-    }
 
     res.json({ success: true, data: alerts })
   } catch (err) {
@@ -1035,19 +995,9 @@ const deleteComplianceAlert = async (req, res, next) => {
 // Super Admin: Get Governance Export Logs
 const getGovernanceLogs = async (req, res, next) => {
   try {
-    let logs = await prisma.governanceLog.findMany({
+    const logs = await prisma.governanceLog.findMany({
       orderBy: { createdAt: 'desc' },
     })
-
-    if (logs.length === 0) {
-      const seedLogs = [
-        { displayId: 'EX-000001', request: 'Patient Demographics Export', requester: 'Sarah Chen', role: 'Admin', status: 'Completed', type: 'CSV' },
-        { displayId: 'EX-000002', request: 'Billing Ledger Export', requester: 'James Wilson', role: 'Admin', status: 'Completed', type: 'PDF' },
-        { displayId: 'EX-000003', request: 'Full System Encrypted Backup', requester: 'System (Auto)', role: 'System', status: 'Completed', type: 'SQL' },
-      ]
-      await prisma.governanceLog.createMany({ data: seedLogs }).catch(() => null)
-      logs = await prisma.governanceLog.findMany({ orderBy: { createdAt: 'desc' } })
-    }
 
     res.json({ success: true, data: logs })
   } catch (err) {
@@ -1083,23 +1033,7 @@ const createGovernanceLog = async (req, res, next) => {
 // Get Support Tickets (seeds initial tickets if empty)
 const getSupportTickets = async (req, res, next) => {
   try {
-    let tickets = await prisma.supportTicket.findMany({ orderBy: { createdAt: 'desc' } })
-    if (tickets.length === 0) {
-      const seedTickets = [
-        { displayId: 'TCK-000001', desc: 'Billing discrepancy on latest invoice', clinic: 'Smart Clinic', email: 'clinic0@health.test', category: 'Billing', priority: 'Low', status: 'Open', created: '9 Jun 2026' },
-        { displayId: 'TCK-000002', desc: 'Cannot add new staff member', clinic: 'Zoya Clinic', email: 'clinic1@health.test', category: 'Account', priority: 'Medium', status: 'In progress', created: '9 Jun 2026' },
-        { displayId: 'TCK-000003', desc: 'AI summary not generating', clinic: 'Zoya Clinic', email: 'clinic1@health.test', category: 'Technical', priority: 'Urgent', status: 'Resolved', created: '7 Jun 2026' },
-        { displayId: 'TCK-000004', desc: 'AI summary not generating', clinic: 'Star Medical', email: 'clinic2@health.test', category: 'Technical', priority: 'High', status: 'Resolved', created: '9 Jun 2026' },
-        { displayId: 'TCK-000005', desc: 'White-label logo upload issue', clinic: 'Star Medical', email: 'clinic2@health.test', category: 'Technical', priority: 'Low', status: 'Closed', created: '7 Jun 2026' },
-        { displayId: 'TCK-000006', desc: 'Patient portal login error', clinic: 'Star Medical', email: 'clinic2@health.test', category: 'Technical', priority: 'High', status: 'Open', created: '6 Jun 2026' },
-        { displayId: 'TCK-000007', desc: 'White-label logo upload issue', clinic: 'Northside Care', email: 'clinic3@health.test', category: 'Technical', priority: 'Urgent', status: 'Closed', created: '9 Jun 2026' },
-        { displayId: 'TCK-000008', desc: 'Patient portal login error', clinic: 'Wellness Hub', email: 'clinic4@health.test', category: 'Technical', priority: 'Low', status: 'Open', created: '9 Jun 2026' },
-        { displayId: 'TCK-000009', desc: 'Request: bulk patient export', clinic: 'Wellness Hub', email: 'clinic4@health.test', category: 'Feature Request', priority: 'High', status: 'In progress', created: '7 Jun 2026' },
-        { displayId: 'TCK-000010', desc: 'Request: bulk patient export', clinic: 'Metro Health Center', email: 'clinic5@health.test', category: 'Feature Request', priority: 'Medium', status: 'In progress', created: '9 Jun 2026' }
-      ]
-      await prisma.supportTicket.createMany({ data: seedTickets }).catch(() => null)
-      tickets = await prisma.supportTicket.findMany({ orderBy: { createdAt: 'desc' } })
-    }
+    const tickets = await prisma.supportTicket.findMany({ orderBy: { createdAt: 'desc' } })
     res.json({ success: true, data: tickets })
   } catch (err) {
     next(err)
@@ -1153,19 +1087,7 @@ const deleteSupportTicket = async (req, res, next) => {
 // Get Support Bugs (seeds initial bugs if empty)
 const getSupportBugs = async (req, res, next) => {
   try {
-    let bugs = await prisma.supportBug.findMany({ orderBy: { createdAt: 'desc' } })
-    if (bugs.length === 0) {
-      const seedBugs = [
-        { displayId: 'BUG-000001', severity: 'Critical', status: 'In Progress', category: 'Auth', title: 'Add Staff form returns 500 on submit', clinic: 'Westend Wellness', reporter: 'David Okonkwo', date: 'May 13, 2026', steps: 'Open clinic settings → Staff → Add Staff → Fill all fields → Submit', affected: 18 },
-        { displayId: 'BUG-000002', severity: 'High', status: 'Triaged', category: 'Billing', title: 'Invoice PDF missing line items for annual plans', clinic: 'Bayview Family Clinic', reporter: 'Sarah Chen', date: 'May 12, 2026', steps: 'Open billing → annual invoice → Download PDF → line items missing', affected: 9 },
-        { displayId: 'BUG-000003', severity: 'High', status: 'New', category: 'Clinical Notes', title: 'Clinical note autosave drops content on slow networks', clinic: 'Maplewood Dermatology', reporter: 'Dr. Emily Rodriguez', date: 'May 12, 2026', steps: 'Type a long note on a throttled network → autosave silently fails', affected: 4 },
-        { displayId: 'BUG-000004', severity: 'Medium', status: 'In Progress', category: 'Mobile', title: 'Mobile app crashes on low-memory devices', clinic: 'Cedar Hill Clinic', reporter: 'Mobile crash logs', date: 'May 11, 2026', steps: 'Open dashboard with > 50 patients on iPhone 11 or older → crash', affected: 22 },
-        { displayId: 'BUG-000005', severity: 'Medium', status: 'Fixed', category: 'Scheduling', title: 'Calendar timezone offset wrong for clinics in AUS', clinic: 'Riverstone Cardiology', reporter: 'Support Team', date: 'May 08, 2026', steps: 'Set clinic timezone to AEST → bookings display in UTC', affected: 3 },
-        { displayId: 'BUG-000006', severity: 'Low', status: "Won't Fix", category: 'Reports', title: 'Dashboard tooltip overlaps sidebar on 1280px width', clinic: 'Northside Dental', reporter: 'Dr. Amelia Park', date: 'Apr 30, 2026', steps: 'View dashboard on exactly 1280x800 resolution', affected: 1 }
-      ]
-      await prisma.supportBug.createMany({ data: seedBugs }).catch(() => null)
-      bugs = await prisma.supportBug.findMany({ orderBy: { createdAt: 'desc' } })
-    }
+    const bugs = await prisma.supportBug.findMany({ orderBy: { createdAt: 'desc' } })
     res.json({ success: true, data: bugs })
   } catch (err) {
     next(err)
@@ -1221,19 +1143,7 @@ const deleteSupportBug = async (req, res, next) => {
 // Get Support Features (seeds initial features if empty)
 const getSupportFeatures = async (req, res, next) => {
   try {
-    let features = await prisma.supportFeature.findMany({ orderBy: { votes: 'desc' } })
-    if (features.length === 0) {
-      const seedFeatures = [
-        { displayId: 'FTR-000001', status: 'In Progress', category: 'AI', title: 'AI-generated SOAP note summaries', desc: 'Use Zealth AI to summarize long clinical notes into a SOAP-format brief.', clinic: 'Maplewood Dermatology', submitter: 'Dr. Emily Rodriguez', date: 'Apr 22, 2026', votes: 121 },
-        { displayId: 'FTR-000002', status: 'Planned', category: 'Reporting', title: 'Bulk-export patient records by date range', desc: 'Allow admins to export patient records as CSV or JSON filtered by a custom date range with HIPAA-safe redaction.', clinic: 'Bayview Family Clinic', submitter: 'Sarah Chen', date: 'May 08, 2026', votes: 84 },
-        { displayId: 'FTR-000003', status: 'Under Review', category: 'Integrations', title: 'Two-way Google Calendar sync for clinicians', desc: 'Sync appointment changes both directions, including reschedules and cancellations.', clinic: 'Northside Dental', submitter: 'Dr. Amelia Park', date: 'May 10, 2026', votes: 62 },
-        { displayId: 'FTR-000004', status: 'Under Review', category: 'Mobile', title: 'Offline mode for mobile clinical notes', desc: 'Allow editing notes offline and syncing once back online.', clinic: 'Westend Wellness', submitter: 'David Okonkwo', date: 'May 04, 2026', votes: 47 },
-        { displayId: 'FTR-000005', status: 'Shipped', category: 'Billing', title: 'Stripe Tax automatic remittance', desc: 'Automatically file taxes per region via Stripe Tax integration.', clinic: 'Greenfield Health', submitter: 'James Wilson', date: 'Mar 18, 2026', votes: 38 },
-        { displayId: 'FTR-000006', status: 'Rejected', category: 'Workflow', title: 'Custom branding on patient-facing emails', desc: 'Let clinics upload a logo and brand color to email templates.', clinic: 'Cedar Hill Clinic', submitter: 'Owner', date: 'Apr 12, 2026', votes: 19 }
-      ]
-      await prisma.supportFeature.createMany({ data: seedFeatures }).catch(() => null)
-      features = await prisma.supportFeature.findMany({ orderBy: { votes: 'desc' } })
-    }
+    const features = await prisma.supportFeature.findMany({ orderBy: { votes: 'desc' } })
     res.json({ success: true, data: features })
   } catch (err) {
     next(err)
@@ -1281,18 +1191,7 @@ const voteSupportFeature = async (req, res, next) => {
 // Support Live Chat
 const getSupportChats = async (req, res, next) => {
   try {
-    let chats = await prisma.supportChatMessage.findMany({ orderBy: { createdAt: 'asc' } })
-    if (chats.length === 0) {
-      const seedChats = [
-        { chatId: '1', name: 'Sarah Chen', clinic: 'Bayview Family Clinic', sender: 'Sarah Chen', text: 'The invoice for May is still missing — can you check?', time: '28m ago', unread: 2, status: 'Waiting' },
-        { chatId: '2', name: 'Dr. Amelia Park', clinic: 'Northside Dental', sender: 'Dr. Amelia Park', text: 'Thanks, that worked! Closing this for now.', time: '10m ago', unread: 0, status: 'Resolved' },
-        { chatId: '3', name: 'David Okonkwo', clinic: 'Westend Wellness', sender: 'David Okonkwo', text: 'I cannot add new staff — getting an error.', time: '5m ago', unread: 1, status: 'Active' },
-        { chatId: '4', name: 'Priya Patel', clinic: 'Sunrise Pediatrics', sender: 'Priya Patel', text: 'Can someone walk me through the analytics tab?', time: '7m ago', unread: 3, status: 'Waiting' },
-        { chatId: '5', name: 'James Wilson', clinic: 'Greenfield Health', sender: 'James Wilson', text: 'Following up on the refund timing.', time: '1h ago', unread: 0, status: 'Active' }
-      ]
-      await prisma.supportChatMessage.createMany({ data: seedChats }).catch(() => null)
-      chats = await prisma.supportChatMessage.findMany({ orderBy: { createdAt: 'asc' } })
-    }
+    const chats = await prisma.supportChatMessage.findMany({ orderBy: { createdAt: 'asc' } })
     res.json({ success: true, data: chats })
   } catch (err) {
     next(err)
@@ -1323,18 +1222,7 @@ const sendSupportChatMessage = async (req, res, next) => {
 // Support Clinic History
 const getSupportClinicHistory = async (req, res, next) => {
   try {
-    let history = await prisma.supportClinicHistory.findMany({ orderBy: { createdAt: 'desc' } })
-    if (history.length === 0) {
-      const seedHistory = [
-        { displayId: 'HST-000001', clinic: 'Bayview Family Clinic', ticketsResolved: 14, bugsReported: 3, lastContact: 'May 13, 2026', satisfaction: '94%' },
-        { displayId: 'HST-000002', clinic: 'Smart Clinic', ticketsResolved: 8, bugsReported: 1, lastContact: 'May 11, 2026', satisfaction: '100%' },
-        { displayId: 'HST-000003', clinic: 'Zoya Clinic', ticketsResolved: 12, bugsReported: 4, lastContact: 'May 09, 2026', satisfaction: '88%' },
-        { displayId: 'HST-000004', clinic: 'Star Medical', ticketsResolved: 21, bugsReported: 5, lastContact: 'May 13, 2026', satisfaction: '91%' },
-        { displayId: 'HST-000005', clinic: 'Northside Care', ticketsResolved: 5, bugsReported: 2, lastContact: 'May 10, 2026', satisfaction: '95%' }
-      ]
-      await prisma.supportClinicHistory.createMany({ data: seedHistory }).catch(() => null)
-      history = await prisma.supportClinicHistory.findMany({ orderBy: { createdAt: 'desc' } })
-    }
+    const history = await prisma.supportClinicHistory.findMany({ orderBy: { createdAt: 'desc' } })
     res.json({ success: true, data: history })
   } catch (err) {
     next(err)
@@ -1345,20 +1233,7 @@ const getPlatformAnalytics = async (req, res, next) => {
   try {
     const clinics = await prisma.clinic.findMany()
     const subscriptions = await prisma.subscription.findMany()
-    let invoices = await prisma.invoice.findMany({ orderBy: { createdAt: 'desc' } })
-
-    // Seed baseline invoices if empty for aging ledger
-    if (invoices.length === 0) {
-      const seedInvoices = [
-        { displayId: 'INV-000001', invoiceNumber: 'INV-7011', patientName: 'Lakeside Medical', issueDate: '2026-05-10', dueDate: '2026-05-17', amount: 1200.00, due: 1200.00, status: 'Overdue' },
-        { displayId: 'INV-000002', invoiceNumber: 'INV-7012', patientName: 'Rosewood Physio', issueDate: '2026-05-12', dueDate: '2026-05-19', amount: 349.00, due: 0.00, status: 'Paid' },
-        { displayId: 'INV-000003', invoiceNumber: 'INV-7013', patientName: 'Care Plus Clinic', issueDate: '2026-05-12', dueDate: '2026-05-19', amount: 899.00, due: 0.00, status: 'Paid' },
-        { displayId: 'INV-000004', invoiceNumber: 'INV-7014', patientName: 'Wynwood Wellness', issueDate: '2026-05-08', dueDate: '2026-05-15', amount: 149.00, due: 149.00, status: 'Overdue' },
-        { displayId: 'INV-000005', invoiceNumber: 'INV-7015', patientName: 'Greenfield Health', issueDate: '2026-05-05', dueDate: '2026-05-12', amount: 149.00, due: 0.00, status: 'Refunded' }
-      ]
-      await prisma.invoice.createMany({ data: seedInvoices }).catch(() => null)
-      invoices = await prisma.invoice.findMany({ orderBy: { createdAt: 'desc' } })
-    }
+    const invoices = await prisma.invoice.findMany({ orderBy: { createdAt: 'desc' } })
 
     // Auto sync invoice records for all registered DB clinics if missing
     for (let c of clinics) {
@@ -2457,17 +2332,7 @@ const getDataLogs = async (req, res, next) => {
       orderBy: { createdAt: 'desc' }
     })
 
-    if (logs.length === 0 && !type && !status && !target && !search) {
-      const seedLogs = [
-        { type: 'Import', fileName: 'client_contacts_2026.csv', target: 'Clients Register', status: 'Success', recordsProcessed: 142, errors: [] },
-        { type: 'Export', fileName: 'billing_ledgers_q2.csv', target: 'Invoice Ledgers', status: 'Success', recordsProcessed: 89, errors: [] },
-        { type: 'Import', fileName: 'failed_practitioners.csv', target: 'Practitioner Timetables', status: 'Failed', recordsProcessed: 0, errors: [{ row: 3, field: 'email', message: 'Email address format is invalid: missing @ symbol' }] },
-        { type: 'Export', fileName: 'appointments_may_2026.xlsx', target: 'Appointments Log', status: 'Success', recordsProcessed: 310, errors: [] },
-        { type: 'Import', fileName: 'services_master_v2.csv', target: 'Services Directory', status: 'Success', recordsProcessed: 28, errors: [] },
-      ]
-      await prisma.dataManagementLog.createMany({ data: seedLogs }).catch(() => null)
-      logs = await prisma.dataManagementLog.findMany({ orderBy: { createdAt: 'desc' } })
-    }
+
 
     const formattedLogs = logs.map(l => ({
       id: l.id,
@@ -2586,19 +2451,7 @@ const getLoginHistory = async (req, res, next) => {
       take: 50
     })
 
-    if (logs.length === 0) {
-      const seedAuthLogs = [
-        { displayId: 'LOG-000001', category: 'Auth', action: 'LOGIN', actor: 'Super Admin', role: 'SUPER_ADMIN', ip: '103.88.24.12', target: 'Chrome / Windows (Current)', severity: 'Active Session', details: 'Melbourne, VIC' },
-        { displayId: 'LOG-000002', category: 'Auth', action: 'LOGIN', actor: 'Super Admin', role: 'SUPER_ADMIN', ip: '120.91.4.11', target: 'iPhone App Client', severity: 'Active Session', details: 'Sydney, NSW' },
-        { displayId: 'LOG-000003', category: 'Auth', action: 'LOGIN', actor: 'Super Admin', role: 'SUPER_ADMIN', ip: '110.12.82.9', target: 'Safari / macOS Sierra', severity: 'Expired', details: 'Melbourne, VIC' },
-        { displayId: 'LOG-000004', category: 'Auth', action: 'LOGIN', actor: 'Super Admin', role: 'SUPER_ADMIN', ip: '198.51.100.4', target: 'Firefox / Linux Desktop', severity: 'Revoked', details: 'Brisbane, QLD' }
-      ]
-      await prisma.auditLog.createMany({ data: seedAuthLogs }).catch(() => null)
-      logs = await prisma.auditLog.findMany({
-        where: { category: 'Auth' },
-        orderBy: { timestamp: 'desc' }
-      })
-    }
+
 
     let formattedLogs = logs.map(l => ({
       key: l.id,

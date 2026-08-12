@@ -25,43 +25,11 @@ const getClinicIdFromReq = async (req) => {
 const getAppointments = async (req, res, next) => {
   try {
     const { search, date, status, practitionerId, patientId } = req.query
-    let appointments = await prisma.appointment.findMany({ orderBy: { createdAt: 'desc' } })
+    const userClinicId = await getClinicIdFromReq(req)
+    const whereClause = userClinicId ? { OR: [{ clinicId: userClinicId }, { clinicId: null }] } : {}
+    let appointments = await prisma.appointment.findMany({ where: whereClause, orderBy: { createdAt: 'desc' } })
 
-    // Auto seed sample appointments if empty
-    if (appointments.length === 0) {
-      const seedAppts = [
-        {
-          displayId: 'APT-000001',
-          patientName: 'John Doe',
-          practitionerName: 'Dr. Sarah Jenkins',
-          appointmentType: 'Consultation',
-          date: new Date().toISOString().split('T')[0],
-          startTime: '10:00',
-          endTime: '11:00',
-          status: 'Confirmed',
-          fee: 180,
-          location: 'Melbourne Clinic',
-          room: 'Room A',
-          notes: 'Initial musculoskeletal assessment'
-        },
-        {
-          displayId: 'APT-000002',
-          patientName: 'Emma Watson',
-          practitionerName: 'Dr. Sarah Jenkins',
-          appointmentType: 'Follow-up',
-          date: new Date().toISOString().split('T')[0],
-          startTime: '14:00',
-          endTime: '15:00',
-          status: 'Arrived',
-          fee: 120,
-          location: 'Melbourne Clinic',
-          room: 'Room B',
-          notes: 'Post-op shoulder rehab review'
-        }
-      ]
-      await prisma.appointment.createMany({ data: seedAppts }).catch(() => null)
-      appointments = await prisma.appointment.findMany({ orderBy: { createdAt: 'desc' } })
-    }
+
 
     let filtered = appointments
 
@@ -232,19 +200,7 @@ const deleteAppointment = async (req, res, next) => {
 const getPractitioners = async (req, res, next) => {
   try {
     let practitioners = await prisma.practitioner.findMany({ orderBy: { createdAt: 'desc' } })
-    if (practitioners.length === 0) {
-      const seedPrac = await prisma.practitioner.create({
-        data: {
-          name: 'Dr. Sarah Jenkins',
-          specialty: 'Physiotherapist',
-          email: 'sarah.jenkins@clinic.com',
-          phone: '+61 412 100 001',
-          status: 'Active',
-          color: '#30D2BE'
-        }
-      }).catch(() => null)
-      if (seedPrac) practitioners = [seedPrac]
-    }
+
     res.json({ success: true, data: practitioners })
   } catch (err) {
     next(err)
@@ -404,18 +360,7 @@ const getPayments = async (req, res, next) => {
       orderBy: { createdAt: 'desc' }
     })
 
-    if (payments.length === 0) {
-      const seedPayments = [
-        { clinicId: clinicId || null, practitionerId: practitionerId || null, receiptNumber: 'RCPT-0394', clientName: 'Nishant Solanki', amount: 108.00, paymentDate: '19 Aug 2026', invoiceReference: 'INV-0394', transactionId: 'tx_rcpt-0394_892' },
-        { clinicId: clinicId || null, practitionerId: practitionerId || null, receiptNumber: 'RCPT-0380', clientName: 'Peter Bent', amount: 264.64, paymentDate: '16 Jun 2026', invoiceReference: 'INV-0380', transactionId: 'tx_rcpt-0380_892' },
-        { clinicId: clinicId || null, practitionerId: practitionerId || null, receiptNumber: 'RCPT-0377', clientName: 'Andrej Anastasov', amount: 241.87, paymentDate: '19 Jun 2026', invoiceReference: 'INV-0377', transactionId: 'tx_rcpt-0377_892' }
-      ]
-      await prisma.payment.createMany({ data: seedPayments }).catch(() => null)
-      payments = await prisma.payment.findMany({
-        where: clinicId ? { OR: [{ clinicId }, { clinicId: null }] } : {},
-        orderBy: { createdAt: 'desc' }
-      })
-    }
+
 
     // Filter payments strictly for logged-in practitioner
     if (practitionerId) {
@@ -695,22 +640,6 @@ const getApiKeys = async (req, res, next) => {
       orderBy: { createdAt: 'desc' }
     }).catch(() => [])
 
-    if (keys.length === 0) {
-      const defaultKeys = [
-        { name: 'Production App', token: 'sk_live_1234567890abcdef', created: '10 Jan 2026', lastUsed: '3 Jul 2026', status: 'Active', userId, clinicId: userClinicId || null },
-        { name: 'Zapier Integration', token: 'sk_live_9876543210fedcba', created: '15 Mar 2026', lastUsed: '1 Jul 2026', status: 'Active', userId, clinicId: userClinicId || null }
-      ]
-      await prisma.apiKey.createMany({ data: defaultKeys }).catch(() => null)
-      keys = await prisma.apiKey.findMany({
-        where: {
-          OR: [
-            ...(userId ? [{ userId }] : []),
-            ...(userClinicId ? [{ clinicId: userClinicId }] : [])
-          ]
-        },
-        orderBy: { createdAt: 'desc' }
-      }).catch(() => defaultKeys)
-    }
 
     res.json({ success: true, data: keys })
   } catch (err) {
@@ -771,18 +700,7 @@ const getLoginHistory = async (req, res, next) => {
       take: 50
     })
 
-    if (logs.length === 0) {
-      const seedAuthLogs = [
-        { displayId: 'LOG-000001', category: 'Auth', action: 'LOGIN', actor: 'Colin Edegbe', role: 'PRACTITIONER', ip: '192.168.1.1', target: 'Chrome / Windows (Current)', severity: 'Active Session', details: 'Melbourne, VIC' },
-        { displayId: 'LOG-000002', category: 'Auth', action: 'LOGIN', actor: 'Colin Edegbe', role: 'PRACTITIONER', ip: '120.91.4.11', target: 'iPhone App Client', severity: 'Active Session', details: 'Sydney, NSW' },
-        { displayId: 'LOG-000003', category: 'Auth', action: 'LOGIN', actor: 'Colin Edegbe', role: 'PRACTITIONER', ip: '110.12.82.9', target: 'Safari / macOS Sierra', severity: 'Expired', details: 'Melbourne, VIC' }
-      ]
-      await prisma.auditLog.createMany({ data: seedAuthLogs }).catch(() => null)
-      logs = await prisma.auditLog.findMany({
-        where: { category: 'Auth' },
-        orderBy: { timestamp: 'desc' }
-      })
-    }
+
 
     let formattedLogs = logs.map(l => ({
       key: l.id,
@@ -1147,19 +1065,7 @@ async function getDashboardStats(req, res, next) {
       take: 10
     }).catch(() => [])
 
-    if (uncompletedNotesList.length === 0) {
-      const seedNotes = [
-        { displayId: `CN-${Date.now().toString().slice(-6)}-1`, clinicId: effectiveClinicId || null, practitionerId: practitionerId || null, patientName: 'John Miller', notes: 'John Miller Notes', profession: 'Physiotherapist', practitionerName: pRecord?.name || 'Dr. Practitioner', status: 'Draft', date: 'Yesterday' },
-        { displayId: `CN-${Date.now().toString().slice(-6)}-2`, clinicId: effectiveClinicId || null, practitionerId: practitionerId || null, patientName: 'Alice Smith', notes: 'Alice Smith Intake', profession: 'Physiotherapist', practitionerName: pRecord?.name || 'Dr. Practitioner', status: 'Draft', date: 'Yesterday' },
-        { displayId: `CN-${Date.now().toString().slice(-6)}-3`, clinicId: effectiveClinicId || null, practitionerId: practitionerId || null, patientName: 'James Davis', notes: 'James Davis Review', profession: 'Physiotherapist', practitionerName: pRecord?.name || 'Dr. Practitioner', status: 'Draft', date: 'Today' }
-      ]
-      await prisma.consultationNote.createMany({ data: seedNotes }).catch(() => null)
-      uncompletedNotesList = await prisma.consultationNote.findMany({
-        where: uncompletedNotesWhere,
-        orderBy: { createdAt: 'desc' },
-        take: 10
-      }).catch(() => [])
-    }
+
 
     // ── Upcoming Reports (Strict Multi-Tenant Scoped) ────────────
     const upcomingReportsWhere = {
@@ -1175,19 +1081,7 @@ async function getDashboardStats(req, res, next) {
       take: 5
     }).catch(() => [])
 
-    if (upcomingReportsList.length === 0) {
-      const seedReports = [
-        { clinicId: effectiveClinicId || null, practitionerId: practitionerId || null, patientName: 'John Miller', name: 'John Miller Report', type: 'Initial Report', date: 'In 2 days', status: 'Pending', uploadBy: pRecord?.name || 'Dr. Practitioner' },
-        { clinicId: effectiveClinicId || null, practitionerId: practitionerId || null, patientName: 'Bob Johnson', name: 'Bob Johnson Report', type: 'Progress Report', date: 'Tomorrow', status: 'Pending', uploadBy: pRecord?.name || 'Dr. Practitioner' },
-        { clinicId: effectiveClinicId || null, practitionerId: practitionerId || null, patientName: 'Alice Smith', name: 'Alice Smith Report', type: 'Discharge Report', date: 'In 5 days', status: 'Pending', uploadBy: pRecord?.name || 'Dr. Practitioner' }
-      ]
-      await prisma.document.createMany({ data: seedReports }).catch(() => null)
-      upcomingReportsList = await prisma.document.findMany({
-        where: upcomingReportsWhere,
-        orderBy: { createdAt: 'desc' },
-        take: 5
-      }).catch(() => [])
-    }
+
 
     res.json({
       success: true,
@@ -1232,19 +1126,7 @@ async function getBodyChartTemplates(req, res, next) {
       orderBy: { createdAt: 'desc' }
     })
 
-    // Auto seed initial templates if none found
-    if (templates.length === 0 && practitioner) {
-      const seeds = [
-        { practitionerId: practitioner.id, name: 'Physiotherapy Full Body', description: 'Full body anterior & posterior chart for physiotherapy assessments', thumbnailUrl: null },
-        { practitionerId: practitioner.id, name: 'Upper Limb Assessment', description: 'Detailed upper limb chart including shoulder, elbow, wrist', thumbnailUrl: null },
-        { practitionerId: practitioner.id, name: 'Lower Limb Assessment', description: 'Detailed lower limb chart including hip, knee, ankle', thumbnailUrl: null },
-      ]
-      await prisma.bodyChartTemplate.createMany({ data: seeds })
-      templates = await prisma.bodyChartTemplate.findMany({
-        where: { practitionerId: practitioner.id },
-        orderBy: { createdAt: 'desc' }
-      })
-    }
+
 
     res.json({ success: true, data: templates })
   } catch (err) {

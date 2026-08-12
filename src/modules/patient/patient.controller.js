@@ -417,47 +417,12 @@ const getTreatmentPlans = async (req, res, next) => {
       if (prisma.treatmentPlan) {
         const patient = await findOrCreatePatient(req.user)
         plans = await prisma.treatmentPlan.findMany({
-          where: {
-            OR: [
-              { patientId: patient.id },
-              { patientId: null }
-            ]
-          },
+          where: { patientId: patient.id },
           orderBy: { createdAt: 'desc' }
         })
-
-        if (!plans || plans.length === 0) {
-          for (const item of inMemoryTreatmentPlans) {
-            try {
-              const uniqueDisplayId = `${item.displayId}_${patient.id.slice(0, 6)}`
-              const created = await prisma.treatmentPlan.create({
-                data: {
-                  displayId: uniqueDisplayId,
-                  patientId: patient.id,
-                  condition: item.condition,
-                  practitioner: item.practitioner,
-                  stage: item.stage,
-                  overallProgress: item.overallProgress,
-                  status: item.status,
-                  goals: item.goals,
-                  timeline: item.timeline
-                }
-              })
-              plans.push(created)
-            } catch (seedErr) {
-              // skip if displayId or patient constraint exists
-            }
-          }
-        }
-      } else {
-        plans = inMemoryTreatmentPlans
       }
     } catch (dbErr) {
-      plans = inMemoryTreatmentPlans
-    }
-
-    if (!plans || plans.length === 0) {
-      plans = inMemoryTreatmentPlans
+      console.warn('DB treatment plans query notice:', dbErr.message)
     }
 
     let filtered = [...plans]
@@ -578,39 +543,12 @@ const getPrescribedExercises = async (req, res, next) => {
       if (prisma.prescribedExercise) {
         const patient = await findOrCreatePatient(req.user)
         exercises = await prisma.prescribedExercise.findMany({
-          where: {
-            OR: [
-              { patientId: patient.id },
-              { patientId: null }
-            ]
-          },
+          where: { patientId: patient.id },
           orderBy: { createdAt: 'desc' }
         })
-
-        if (!exercises || exercises.length === 0) {
-          for (const ex of inMemoryExercises) {
-            const created = await prisma.prescribedExercise.create({
-              data: {
-                patientId: patient.id,
-                name: ex.name,
-                reps: ex.reps,
-                note: ex.note,
-                done: ex.done,
-                img: ex.img
-              }
-            })
-            exercises.push(created)
-          }
-        }
-      } else {
-        exercises = inMemoryExercises
       }
     } catch (dbErr) {
-      exercises = inMemoryExercises
-    }
-
-    if (!exercises || exercises.length === 0) {
-      exercises = inMemoryExercises
+      console.warn('DB prescribed exercises query notice:', dbErr.message)
     }
 
     res.json({ success: true, data: exercises })
@@ -727,50 +665,17 @@ const getProgressOutcomes = async (req, res, next) => {
       if (prisma.patientProgressTrend && prisma.patientOutcomeMeasure) {
         const patient = await findOrCreatePatient(req.user)
         trends = await prisma.patientProgressTrend.findMany({
-          where: { OR: [{ patientId: patient.id }, { patientId: null }] },
+          where: { patientId: patient.id },
           orderBy: { createdAt: 'asc' }
         })
         measures = await prisma.patientOutcomeMeasure.findMany({
-          where: { OR: [{ patientId: patient.id }, { patientId: null }] },
+          where: { patientId: patient.id },
           orderBy: { createdAt: 'asc' }
         })
-
-        if (!trends || trends.length === 0) {
-          for (const tr of inMemoryOutcomesData) {
-            const created = await prisma.patientProgressTrend.create({
-              data: { patientId: patient.id, month: tr.month, pain: tr.pain, function: tr.function, mobility: tr.mobility }
-            })
-            trends.push(created)
-          }
-        }
-
-        if (!measures || measures.length === 0) {
-          for (const om of inMemoryOutcomeMeasures) {
-            const created = await prisma.patientOutcomeMeasure.create({
-              data: {
-                patientId: patient.id,
-                name: om.name,
-                type: om.type,
-                prevScore: om.prevScore,
-                score: om.score,
-                status: om.status,
-                verifiedBy: om.verifiedBy || null
-              }
-            })
-            measures.push(created)
-          }
-        }
-      } else {
-        trends = inMemoryOutcomesData
-        measures = inMemoryOutcomeMeasures
       }
     } catch (dbErr) {
-      trends = inMemoryOutcomesData
-      measures = inMemoryOutcomeMeasures
+      console.warn('DB progress outcomes query notice:', dbErr.message)
     }
-
-    if (!trends || trends.length === 0) trends = inMemoryOutcomesData
-    if (!measures || measures.length === 0) measures = inMemoryOutcomeMeasures
 
     let filteredMeasures = [...measures]
     if (type && type !== 'ALL') {
@@ -787,18 +692,18 @@ const getProgressOutcomes = async (req, res, next) => {
       )
     }
 
-    const latestTrend = trends[trends.length - 1] || { pain: 2, function: 90, mobility: 92 }
-    const firstTrend = trends[0] || { pain: 8, function: 30, mobility: 40 }
+    const latestTrend = trends[trends.length - 1] || null
+    const firstTrend = trends[0] || null
 
     const metrics = {
-      painIndex: `${latestTrend.pain} / 10 (${latestTrend.pain <= 3 ? 'Mild' : latestTrend.pain <= 6 ? 'Moderate' : 'Severe'})`,
-      painChange: `${Math.round(((latestTrend.pain - firstTrend.pain) / (firstTrend.pain || 1)) * 100)}% from initial intake`,
-      mobilityRating: `${latestTrend.mobility}% Rating`,
-      mobilityExpansion: `+${latestTrend.mobility - firstTrend.mobility}% ROM expansion`,
-      strengthRating: `85% Rating`,
-      strengthIncrease: `+35% isometric loading capacity`,
-      complianceCompleted: `75% Completed`,
-      complianceStreak: `7-day active streak`
+      painIndex: latestTrend ? `${latestTrend.pain} / 10 (${latestTrend.pain <= 3 ? 'Mild' : latestTrend.pain <= 6 ? 'Moderate' : 'Severe'})` : '0 / 10',
+      painChange: (latestTrend && firstTrend) ? `${Math.round(((latestTrend.pain - firstTrend.pain) / (firstTrend.pain || 1)) * 100)}% from initial intake` : 'No change data',
+      mobilityRating: latestTrend ? `${latestTrend.mobility}% Rating` : '0% Rating',
+      mobilityExpansion: (latestTrend && firstTrend) ? `+${latestTrend.mobility - firstTrend.mobility}% ROM expansion` : '0% ROM expansion',
+      strengthRating: latestTrend ? `${latestTrend.function || 0}% Rating` : '0% Rating',
+      strengthIncrease: '0% isometric loading capacity',
+      complianceCompleted: '0% Completed',
+      complianceStreak: '0-day active streak'
     }
 
     res.json({
@@ -1012,50 +917,17 @@ const getFormsAndDocuments = async (req, res, next) => {
       if (prisma.patientForm && prisma.document) {
         const patient = await findOrCreatePatient(req.user)
         forms = await prisma.patientForm.findMany({
-          where: { OR: [{ patientId: patient.id }, { patientId: null }] },
+          where: { patientId: patient.id },
           orderBy: { createdAt: 'asc' }
         })
         docs = await prisma.document.findMany({
-          where: { OR: [{ patientId: patient.id }, { patientId: null }] },
+          where: { patientId: patient.id },
           orderBy: { createdAt: 'desc' }
         })
-
-        if (!forms || forms.length === 0) {
-          for (const f of inMemoryForms) {
-            const created = await prisma.patientForm.create({
-              data: { patientId: patient.id, name: f.name, category: f.category, status: f.status }
-            })
-            forms.push(created)
-          }
-        }
-
-        if (!docs || docs.length === 0) {
-          for (const d of inMemoryDocuments) {
-            const created = await prisma.document.create({
-              data: {
-                name: d.name,
-                patientName: patient.fullName || 'Patient',
-                patientId: patient.id,
-                date: d.date,
-                type: d.type,
-                status: 'Active',
-                uploadBy: patient.fullName || 'Patient'
-              }
-            })
-            docs.push({ ...created, size: d.size })
-          }
-        }
-      } else {
-        forms = inMemoryForms
-        docs = inMemoryDocuments
       }
     } catch (dbErr) {
-      forms = inMemoryForms
-      docs = inMemoryDocuments
+      console.warn('DB forms and documents query notice:', dbErr.message)
     }
-
-    if (!forms || forms.length === 0) forms = inMemoryForms
-    if (!docs || docs.length === 0) docs = inMemoryDocuments
 
     const formattedDocs = docs.map(d => ({
       id: d.id,
@@ -1210,64 +1082,17 @@ const getFundingAndClaims = async (req, res, next) => {
       if (prisma.patientFundingAccount && prisma.patientClaim) {
         const patient = await findOrCreatePatient(req.user)
         accounts = await prisma.patientFundingAccount.findMany({
-          where: { OR: [{ patientId: patient.id }, { patientId: null }] },
+          where: { patientId: patient.id },
           orderBy: { createdAt: 'asc' }
         })
         claims = await prisma.patientClaim.findMany({
-          where: { OR: [{ patientId: patient.id }, { patientId: null }] },
+          where: { patientId: patient.id },
           orderBy: { createdAt: 'desc' }
         })
-
-        if (!accounts || accounts.length === 0) {
-          for (const fa of inMemoryFundingAccounts) {
-            const created = await prisma.patientFundingAccount.create({
-              data: {
-                patientId: patient.id,
-                type: fa.type,
-                remaining: fa.remaining,
-                percent: fa.percent,
-                status: fa.status,
-                used: fa.used,
-                total: fa.total,
-                expiry: fa.expiry
-              }
-            })
-            accounts.push(created)
-          }
-        }
-
-        if (!claims || claims.length === 0) {
-          for (const clm of inMemoryClaimsHistory) {
-            try {
-              const uniqueDisplayId = `${clm.id}_${patient.id.slice(0, 6)}`
-              const created = await prisma.patientClaim.create({
-                data: {
-                  displayId: uniqueDisplayId,
-                  patientId: patient.id,
-                  service: clm.service,
-                  date: clm.date,
-                  amount: clm.amount,
-                  funding: clm.funding,
-                  status: clm.status
-                }
-              })
-              claims.push(created)
-            } catch (seedErr) {
-              // skip if displayId or patient constraint exists
-            }
-          }
-        }
-      } else {
-        accounts = inMemoryFundingAccounts
-        claims = inMemoryClaimsHistory
       }
     } catch (dbErr) {
-      accounts = inMemoryFundingAccounts
-      claims = inMemoryClaimsHistory
+      console.warn('DB funding and claims query notice:', dbErr.message)
     }
-
-    if (!accounts || accounts.length === 0) accounts = inMemoryFundingAccounts
-    if (!claims || claims.length === 0) claims = inMemoryClaimsHistory
 
     let filteredClaims = [...claims]
     if (funding && funding !== 'ALL') {
@@ -1289,7 +1114,7 @@ const getFundingAndClaims = async (req, res, next) => {
       success: true,
       data: {
         activeFunding: accounts,
-        alerts: inMemoryAlerts,
+        alerts: [],
         claimsHistory: filteredClaims
       }
     })
@@ -1668,41 +1493,14 @@ const getPatientInvoices = async (req, res, next) => {
       if (prisma.patientInvoice) {
         const patient = await findOrCreatePatient(req.user)
         invoices = await prisma.patientInvoice.findMany({
-          where: { OR: [{ patientId: patient.id }, { patientId: null }] },
+          where: { patientId: patient.id },
           orderBy: { createdAt: 'desc' }
         })
-
-        if (!invoices || invoices.length === 0) {
-          for (const inv of inMemoryPatientInvoices) {
-            try {
-              const uniqueDisplayId = `${inv.id}_${patient.id.slice(0, 6)}`
-              const created = await prisma.patientInvoice.create({
-                data: {
-                  displayId: uniqueDisplayId,
-                  patientId: patient.id,
-                  service: inv.service,
-                  practitioner: inv.practitioner,
-                  amount: inv.amount,
-                  status: inv.status,
-                  due: inv.due
-                }
-              })
-              invoices.push({ ...created, id: created.displayId || created.id })
-            } catch (seedErr) {
-              // skip if displayId or patient constraint exists
-            }
-          }
-        } else {
-          invoices = invoices.map(i => ({ ...i, id: i.displayId || i.id }))
-        }
-      } else {
-        invoices = inMemoryPatientInvoices
+        invoices = invoices.map(i => ({ ...i, id: i.displayId || i.id }))
       }
     } catch (dbErr) {
-      invoices = inMemoryPatientInvoices
+      console.warn('DB patient invoices query notice:', dbErr.message)
     }
-
-    if (!invoices || invoices.length === 0) invoices = inMemoryPatientInvoices
 
     let filtered = [...invoices]
     if (status && status !== 'ALL') {

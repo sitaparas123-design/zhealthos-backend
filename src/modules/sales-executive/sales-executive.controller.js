@@ -403,31 +403,36 @@ const convertLead = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Lead not found' })
     }
 
-    // Create a new Clinic from lead data
-    const clinic = await prisma.clinic.create({
-      data: {
-        name: lead.companyName || lead.name || 'Converted Clinic',
-        email: lead.email || '',
-        phone: lead.phone || lead.contact || '',
-        contactPerson: lead.contactPerson || '',
-        salesperson: salesperson || 'Sales Executive',
-        tier: tier || 'Basic',
-        revenue: parseFloat(value) || parseFloat(lead.value) || 0,
-        status: 'Active',
-      }
-    })
+    const assignedSalesperson = salesperson || (req.user ? req.user.name || req.user.email : 'Sales Executive')
 
-    // Update the lead stage to Converted and add activity
-    const history = lead.history || []
-    history.push({ time: new Date().toISOString(), text: `Converted to Clinic successfully (Tier: ${tier || 'Basic'})` })
+    // Perform atomic transaction for Clinic creation & Lead status update
+    const [clinic, updatedLead] = await prisma.$transaction(async (tx) => {
+      const createdClinic = await tx.clinic.create({
+        data: {
+          name: lead.companyName || lead.name || 'Converted Clinic',
+          email: lead.email || '',
+          phone: lead.phone || lead.contact || '',
+          contactPerson: lead.contactPerson || '',
+          salesperson: assignedSalesperson,
+          tier: tier || 'Basic',
+          revenue: parseFloat(value) || parseFloat(lead.value) || 0,
+          status: 'Active',
+        }
+      })
 
-    const updatedLead = await prisma.salesLead.update({
-      where: { id: leadId },
-      data: {
-        stage: 'Converted',
-        status: 'Converted',
-        history,
-      }
+      const history = Array.isArray(lead.history) ? lead.history : []
+      history.push({ time: new Date().toISOString(), text: `Converted to Clinic successfully (Tier: ${tier || 'Basic'})` })
+
+      const leadUpdated = await tx.salesLead.update({
+        where: { id: leadId },
+        data: {
+          stage: 'Converted',
+          status: 'Converted',
+          history,
+        }
+      })
+
+      return [createdClinic, leadUpdated]
     })
 
     res.json({
