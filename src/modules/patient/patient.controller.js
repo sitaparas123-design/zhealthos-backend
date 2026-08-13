@@ -241,6 +241,16 @@ const createAppointment = async (req, res, next) => {
     const patient = await findOrCreatePatient(req.user)
     const { practitionerId, practitionerName, branchName, serviceName, date, startTime, notes } = req.body
 
+    let finalPracName = practitionerName
+    let finalPracId = practitionerId
+
+    if (finalPracId && (!finalPracName || finalPracName === 'Dr. Sarah Jenkins')) {
+      const pRecord = await prisma.practitioner.findUnique({ where: { id: finalPracId } }).catch(() => null)
+      if (pRecord && pRecord.name) {
+        finalPracName = pRecord.name
+      }
+    }
+
     const count = await prisma.appointment.count()
     const displayId = `APT-${String(count + 1).padStart(6, '0')}`
 
@@ -249,8 +259,8 @@ const createAppointment = async (req, res, next) => {
         displayId,
         patientId: patient.id,
         patientName: patient.fullName || req.user.name || 'John Doe',
-        practitionerId: practitionerId || null,
-        practitionerName: practitionerName || 'Dr. Sarah Jenkins',
+        practitionerId: finalPracId || null,
+        practitionerName: finalPracName || 'Dr. Practitioner',
         branchName: branchName || 'Melbourne Allied Health',
         serviceName: serviceName || 'General Consultation',
         date: date || new Date().toISOString().split('T')[0],

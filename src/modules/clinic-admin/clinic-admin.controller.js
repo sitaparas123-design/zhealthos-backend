@@ -1921,7 +1921,7 @@ const getAdmins = async (req, res, next) => {
         email: u.email,
         phone: u.phone || '',
         avatar: u.avatarUrl || '',
-        role: pData.roleTitle || (u.role === 'SUPER_ADMIN' ? 'Super Admin' : 'Manager'),
+        role: pData.roleTitle || (u.role === 'SUPER_ADMIN' ? 'Super Admin' : 'Clinic Admin'),
         status: u.status === 'ACTIVE' ? 'Active' : 'Inactive',
         joinDate: u.createdAt ? new Date(u.createdAt).toISOString().split('T')[0] : '2026-01-01',
         assignedBranches: pData.assignedBranches || [],
@@ -1993,7 +1993,7 @@ const createAdmin = async (req, res, next) => {
         status: (status || 'Active').toUpperCase() === 'ACTIVE' ? 'ACTIVE' : 'INACTIVE',
         profileData: {
           clinicId: userClinicId || null,
-          roleTitle: role || 'Manager',
+          roleTitle: role || 'Clinic Admin',
           assignedBranches: assignedBranches || [],
           permissions: permissions || {}
         }
@@ -2007,7 +2007,7 @@ const createAdmin = async (req, res, next) => {
       email: newUser.email,
       phone: newUser.phone || '',
       avatar: newUser.avatarUrl || '',
-      role: role || 'Manager',
+      role: role || 'Clinic Admin',
       status: newUser.status === 'ACTIVE' ? 'Active' : 'Inactive',
       joinDate: new Date(newUser.createdAt).toISOString().split('T')[0],
       assignedBranches: assignedBranches || [],
@@ -2057,7 +2057,7 @@ const updateAdmin = async (req, res, next) => {
       email: updatedUser.email,
       phone: updatedUser.phone || '',
       avatar: updatedUser.avatarUrl || '',
-      role: (updatedUser.profileData && updatedUser.profileData.roleTitle) || 'Manager',
+      role: (updatedUser.profileData && updatedUser.profileData.roleTitle) || (updatedUser.role === 'SUPER_ADMIN' ? 'Super Admin' : 'Clinic Admin'),
       status: updatedUser.status === 'ACTIVE' ? 'Active' : 'Inactive',
       joinDate: updatedUser.createdAt ? new Date(updatedUser.createdAt).toISOString().split('T')[0] : '2026-01-01',
       assignedBranches: (updatedUser.profileData && updatedUser.profileData.assignedBranches) || [],
