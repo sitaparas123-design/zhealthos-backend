@@ -1273,20 +1273,7 @@ async function deleteConsultation(req, res, next) {
 }
 
 // ─── Practitioner: Prescribed Exercises ───────────────────────────────────────
-let inMemoryPrescribedExercises = [
-  {
-    id: 'ex_1',
-    patientId: 'p1',
-    patientName: 'John Miller',
-    programName: 'Lower Back Rehab Program',
-    practitionerName: 'Dr. Sarah Jenkins',
-    date: new Date().toISOString().split('T')[0],
-    compliance: { viewed: true, started: true, completed: false },
-    exercises: [
-      { videoName: 'Cat-Cow Lumbar Mobilisation', instructions: 'Perform 3 sets of 10 reps slowly', sets: 3, reps: 10, frequency: 'Daily' }
-    ]
-  }
-]
+let inMemoryPrescribedExercises = []
 
 async function getPrescribedExercises(req, res, next) {
   try {
@@ -1297,20 +1284,43 @@ async function getPrescribedExercises(req, res, next) {
       }).catch(() => [])
 
       if (dbList && dbList.length > 0) {
-        const patients = await prisma.patient.findMany({ select: { id: true, name: true, firstName: true, lastName: true } }).catch(() => [])
+        const patients = await prisma.patient.findMany({ 
+          select: { id: true, fullName: true, email: true, phone: true } 
+        }).catch(() => [])
+
+        const users = await prisma.user.findMany({
+          where: { role: 'PATIENT' },
+          select: { id: true, name: true, email: true }
+        }).catch(() => [])
 
         list = dbList.map(item => {
           const inMemMatch = inMemoryPrescribedExercises.find(m => m.id === item.id)
-          const matchedPatient = patients.find(p => p.id === item.patientId || p.name === item.patientId)
+          const matchedPatient = patients.find(p => p.id === item.patientId || (p.fullName && item.patientId && p.fullName.trim().toLowerCase() === item.patientId.trim().toLowerCase()))
+          const matchedUser = users.find(u => u.id === item.patientId || (u.name && item.patientId && u.name.trim().toLowerCase() === item.patientId.trim().toLowerCase()))
 
           let pName = inMemMatch?.patientName
-          if (matchedPatient) {
-            pName = matchedPatient.name || `${matchedPatient.firstName || ''} ${matchedPatient.lastName || ''}`.trim()
-          } else if (item.patientId && !item.patientId.includes('-') && item.patientId !== 'p1' && !item.patientId.startsWith('ex_')) {
-            pName = item.patientId
+          if (matchedPatient && matchedPatient.fullName) {
+            pName = matchedPatient.fullName.trim()
+          } else if (matchedUser && matchedUser.name) {
+            pName = matchedUser.name.trim()
+          } else if (inMemMatch?.patientName) {
+            pName = inMemMatch.patientName.trim()
+          } else if (item.patientId && !item.patientId.startsWith('ex_') && !item.patientId.startsWith('p1')) {
+            // Check if patientId is a UUID string vs a name
+            const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.patientId)
+            if (!isUuid) {
+              pName = item.patientId
+            }
           }
-          if (!pName || pName.includes('-') || pName === 'Client Patient') {
-            pName = 'John Miller'
+
+          if (!pName || pName === 'Client Patient') {
+            if (patients.length > 0 && patients[0].fullName) {
+              pName = patients[0].fullName.trim()
+            } else if (users.length > 0 && users[0].name) {
+              pName = users[0].name.trim()
+            } else {
+              pName = 'Patient'
+            }
           }
 
           return {
@@ -1319,8 +1329,8 @@ async function getPrescribedExercises(req, res, next) {
             patientName: pName,
             programName: item.name || 'Home Exercise Program',
             date: item.createdAt ? new Date(item.createdAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-            compliance: { viewed: item.done || false, started: item.done || false, completed: item.done || false },
-            exercises: [
+            compliance: inMemMatch?.compliance || { viewed: item.done || false, started: item.done || false, completed: item.done || false },
+            exercises: inMemMatch?.exercises || [
               { videoName: item.name, instructions: item.note || '', sets: 3, reps: item.reps || '10', frequency: 'Daily' }
             ]
           }
@@ -1340,10 +1350,23 @@ async function createPrescribedExercise(req, res, next) {
   try {
     const { patientId, patientName, programName, practitionerName, exercises, delivery, instructions } = req.body
 
+    let finalPatientName = (patientName || '').trim()
+    let finalPatientId = patientId
+
+    if (prisma.patient && (!finalPatientName || finalPatientName === 'John Miller' || finalPatientName === 'Client Patient')) {
+      const pMatch = await prisma.patient.findFirst({
+        where: { OR: [{ id: patientId }, { fullName: patientId }] }
+      }).catch(() => null)
+      if (pMatch && pMatch.fullName) {
+        finalPatientName = pMatch.fullName.trim()
+        finalPatientId = pMatch.id
+      }
+    }
+
     const newProg = {
       id: `ex_${Date.now()}`,
-      patientId: patientId || 'p1',
-      patientName: patientName || 'John Miller',
+      patientId: finalPatientId || 'p1',
+      patientName: finalPatientName || 'Patient',
       programName: programName || 'Home Exercise Program',
       practitionerName: practitionerName || req.user?.name || 'Dr. Treating Clinician',
       date: new Date().toISOString().split('T')[0],

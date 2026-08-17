@@ -425,14 +425,35 @@ const getTreatmentPlans = async (req, res, next) => {
 
     try {
       if (prisma.treatmentPlan) {
-        const patient = await findOrCreatePatient(req.user)
+        let whereClause = {}
+        if (req.user?.role === 'PATIENT') {
+          const patient = await findOrCreatePatient(req.user)
+          whereClause = { patientId: patient.id }
+        }
+
         plans = await prisma.treatmentPlan.findMany({
-          where: { patientId: patient.id },
+          where: whereClause,
           orderBy: { createdAt: 'desc' }
+        })
+
+        const patients = await prisma.patient.findMany({
+          select: { id: true, fullName: true, email: true }
+        }).catch(() => [])
+
+        plans = plans.map(p => {
+          const matched = patients.find(pt => pt.id === p.patientId)
+          return {
+            ...p,
+            patientName: matched ? matched.fullName.trim() : (p.patientId || 'Patient')
+          }
         })
       }
     } catch (dbErr) {
       console.warn('DB treatment plans query notice:', dbErr.message)
+    }
+
+    if (!plans || plans.length === 0) {
+      plans = inMemoryTreatmentPlans
     }
 
     let filtered = [...plans]
@@ -444,7 +465,8 @@ const getTreatmentPlans = async (req, res, next) => {
       filtered = filtered.filter(p =>
         (p.condition && p.condition.toLowerCase().includes(q)) ||
         (p.practitioner && p.practitioner.toLowerCase().includes(q)) ||
-        (p.stage && p.stage.toLowerCase().includes(q))
+        (p.stage && p.stage.toLowerCase().includes(q)) ||
+        (p.patientName && p.patientName.toLowerCase().includes(q))
       )
     }
 
