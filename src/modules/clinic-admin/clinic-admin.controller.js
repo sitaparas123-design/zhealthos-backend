@@ -192,18 +192,27 @@ const createPractitioner = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Name and Email are required' })
     }
 
+    const cleanEmail = email.trim().toLowerCase()
     const userClinicId = await getClinicIdFromReq(req)
     const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
     
+    // Check if practitioner with this email already exists
+    const existingPractitioner = await prisma.practitioner.findFirst({
+      where: { email: cleanEmail }
+    })
+    if (existingPractitioner) {
+      return res.status(400).json({ success: false, message: 'A practitioner with this email already exists' })
+    }
+
     // Check if user already exists
-    let user = await prisma.user.findUnique({ where: { email } })
+    let user = await prisma.user.findUnique({ where: { email: cleanEmail } })
     if (!user) {
       const bcrypt = require('bcryptjs')
       const salt = await bcrypt.genSalt(10)
       const passwordHash = await bcrypt.hash('password123', salt) // Default password
       user = await prisma.user.create({
         data: {
-          email,
+          email: cleanEmail,
           name,
           passwordHash,
           role: 'PRACTITIONER',
@@ -211,6 +220,14 @@ const createPractitioner = async (req, res, next) => {
           profileData: userClinicId ? { clinicId: userClinicId } : undefined
         }
       })
+    } else {
+      // Check if user is already linked to another practitioner
+      const existingUserPractitioner = await prisma.practitioner.findFirst({
+        where: { userId: user.id }
+      })
+      if (existingUserPractitioner) {
+        return res.status(400).json({ success: false, message: 'A practitioner account is already linked to this email' })
+      }
     }
 
     const p = await prisma.practitioner.create({
@@ -219,7 +236,7 @@ const createPractitioner = async (req, res, next) => {
         clinicId: userClinicId || null,
         name,
         specialty: specialty || 'Physiotherapist',
-        email,
+        email: cleanEmail,
         phone: phone || null,
         status: status || 'Active',
         color: color || '#8C4BFF',
@@ -233,6 +250,9 @@ const createPractitioner = async (req, res, next) => {
     })
     res.json({ success: true, data: p, message: 'Practitioner created successfully' })
   } catch (err) {
+    if (err.code === 'P2002') {
+      return res.status(400).json({ success: false, message: 'A practitioner with this email already exists' })
+    }
     next(err)
   }
 }
@@ -241,12 +261,55 @@ const updatePractitioner = async (req, res, next) => {
   try {
     const { id } = req.params
     const { name, specialty, email, phone, status, color, consultationFee, assignedBranches, availability, qualifications, bio } = req.body
+
+    const existingPractitioner = await prisma.practitioner.findUnique({
+      where: { id }
+    })
+    if (!existingPractitioner) {
+      return res.status(404).json({ success: false, message: 'Practitioner not found' })
+    }
+
+    const cleanEmail = email ? email.trim().toLowerCase() : undefined
+
+    if (cleanEmail && cleanEmail !== existingPractitioner.email.toLowerCase()) {
+      const emailTaken = await prisma.practitioner.findFirst({
+        where: {
+          email: cleanEmail,
+          NOT: { id }
+        }
+      })
+      if (emailTaken) {
+        return res.status(400).json({ success: false, message: 'This email is already in use by another practitioner' })
+      }
+
+      // Update linked User email if user exists
+      if (existingPractitioner.userId) {
+        const userEmailTaken = await prisma.user.findFirst({
+          where: {
+            email: cleanEmail,
+            NOT: { id: existingPractitioner.userId }
+          }
+        })
+        if (!userEmailTaken) {
+          await prisma.user.update({
+            where: { id: existingPractitioner.userId },
+            data: { email: cleanEmail, ...(name && { name }) }
+          }).catch(() => null)
+        }
+      }
+    } else if (name && existingPractitioner.userId) {
+      await prisma.user.update({
+        where: { id: existingPractitioner.userId },
+        data: { name }
+      }).catch(() => null)
+    }
+
     const p = await prisma.practitioner.update({
       where: { id },
       data: {
         ...(name && { name }),
         ...(specialty && { specialty }),
-        ...(email !== undefined && { email }),
+        ...(cleanEmail !== undefined && { email: cleanEmail }),
         ...(phone !== undefined && { phone }),
         ...(status !== undefined && { status }),
         ...(color !== undefined && { color }),
@@ -259,6 +322,9 @@ const updatePractitioner = async (req, res, next) => {
     })
     res.json({ success: true, data: p, message: 'Practitioner updated successfully' })
   } catch (err) {
+    if (err.code === 'P2002') {
+      return res.status(400).json({ success: false, message: 'This email is already in use by another practitioner' })
+    }
     next(err)
   }
 }
