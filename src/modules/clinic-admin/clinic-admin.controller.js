@@ -1944,11 +1944,12 @@ const getAdmins = async (req, res, next) => {
       orderBy: { createdAt: 'desc' }
     })
 
-    // Multi-Tenant Isolation: Non-SUPER_ADMIN only sees admins belonging to their clinic
+    // Multi-Tenant Isolation: Non-SUPER_ADMIN only sees admins belonging strictly to their clinic
     if (userRole !== 'SUPER_ADMIN' && userClinicId) {
       users = users.filter(u => {
+        if (u.role === 'SUPER_ADMIN') return false
         const uClinicId = u.profileData && typeof u.profileData === 'object' ? u.profileData.clinicId : null
-        return uClinicId === userClinicId || u.id === req.user?.id || u.email === req.user?.email || !uClinicId
+        return uClinicId === userClinicId || u.id === req.user?.id || u.email === req.user?.email
       })
     }
 
