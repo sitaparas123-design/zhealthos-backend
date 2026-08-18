@@ -70,6 +70,7 @@ const createClinic = async (req, res, next) => {
       data: {
         displayId: invDisplayId,
         invoiceNumber: `INV-${Math.floor(7000 + Math.random() * 2000)}`,
+        clinicId: clinic.id,
         patientName: clinic.name,
         issueDate: today,
         dueDate: today,
@@ -78,6 +79,20 @@ const createClinic = async (req, res, next) => {
         status: 'Overdue'
       }
     }).catch(() => null)
+
+    if (clinic.email) {
+      const cleanEmail = clinic.email.toLowerCase().trim()
+      const existingUser = await prisma.user.findUnique({ where: { email: cleanEmail } })
+      if (existingUser) {
+        const existingPData = (existingUser.profileData && typeof existingUser.profileData === 'object') ? existingUser.profileData : {}
+        await prisma.user.update({
+          where: { id: existingUser.id },
+          data: {
+            profileData: { ...existingPData, clinicId: clinic.id }
+          }
+        }).catch(() => null)
+      }
+    }
 
     res.json({ success: true, data: clinic })
   } catch (err) {
@@ -478,7 +493,7 @@ const getAdmins = async (req, res, next) => {
 const createAdmin = async (req, res, next) => {
   try {
     const bcrypt = require('bcryptjs')
-    const { name, email, password, phone, role, status } = req.body
+    const { name, email, password, phone, role, status, clinicId, clinicName } = req.body
     if (!email || !name) {
       return res.status(400).json({ success: false, message: 'Name and Email are required' })
     }
@@ -501,6 +516,20 @@ const createAdmin = async (req, res, next) => {
       userRole = 'SUPER_ADMIN'
     }
 
+    let targetClinicId = clinicId || null
+    if (!targetClinicId && clinicName && userRole === 'CLINIC_ADMIN') {
+      const foundClinic = await prisma.clinic.findFirst({
+        where: { name: { contains: clinicName } }
+      }).catch(() => null)
+      if (foundClinic) targetClinicId = foundClinic.id
+    }
+    if (!targetClinicId && userRole === 'CLINIC_ADMIN') {
+      const foundClinic = await prisma.clinic.findFirst({
+        where: { email: lowerEmail }
+      }).catch(() => null)
+      if (foundClinic) targetClinicId = foundClinic.id
+    }
+
     const userStatus = status === 'Suspended' ? 'SUSPENDED' : status === 'Inactive' ? 'INACTIVE' : 'ACTIVE'
     const prefix = userRole === 'SUPER_ADMIN' || userRole === 'CLINIC_ADMIN' ? 'ADM' : userRole === 'SALES_EXECUTIVE' ? 'SLS' : 'USR'
     const displayId = await generateDisplayId('user', prefix)
@@ -514,6 +543,7 @@ const createAdmin = async (req, res, next) => {
         phone: phone || null,
         role: userRole,
         status: userStatus,
+        profileData: targetClinicId ? { clinicId: targetClinicId } : undefined
       },
     })
 

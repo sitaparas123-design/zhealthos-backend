@@ -46,7 +46,7 @@ const getBranches = async (req, res, next) => {
 
     const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
       ? {}
-      : (userClinicId ? { OR: [{ clinicId: userClinicId }, { clinicId: null }] } : { clinicId: null })
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     let branches = await prisma.branch.findMany({
       where: whereClause,
@@ -152,7 +152,7 @@ const getPractitioners = async (req, res, next) => {
 
     const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
       ? {}
-      : (userClinicId ? { OR: [{ clinicId: userClinicId }, { clinicId: null }] } : { clinicId: null })
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     let practitioners = await prisma.practitioner.findMany({
       where: whereClause,
@@ -346,15 +346,9 @@ const getInvoices = async (req, res, next) => {
     const userRole = req.user?.role
     const userClinicId = await getClinicIdFromReq(req)
 
-    let whereClause = {}
-    if (userRole !== 'SUPER_ADMIN' && userClinicId) {
-      whereClause = {
-        OR: [
-          { clinicId: userClinicId },
-          { clinicId: null }
-        ]
-      }
-    }
+    const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
+      ? {}
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     let invoices = await prisma.invoice.findMany({
       where: whereClause,
@@ -476,15 +470,9 @@ const getAppointments = async (req, res, next) => {
     const userRole = req.user?.role
     const userClinicId = await getClinicIdFromReq(req)
 
-    let whereClause = {}
-    if (userRole !== 'SUPER_ADMIN' && userClinicId) {
-      whereClause = {
-        OR: [
-          { clinicId: userClinicId },
-          { clinicId: null }
-        ]
-      }
-    }
+    const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
+      ? {}
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     let appointments = await prisma.appointment.findMany({
       where: whereClause,
@@ -794,15 +782,9 @@ const getContacts = async (req, res, next) => {
     const userRole = req.user?.role
     const userClinicId = await getClinicIdFromReq(req)
 
-    let whereClause = {}
-    if (userRole !== 'SUPER_ADMIN' && userClinicId) {
-      whereClause = {
-        OR: [
-          { clinicId: userClinicId },
-          { clinicId: null }
-        ]
-      }
-    }
+    const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
+      ? {}
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     let contacts = await prisma.contact.findMany({
       where: whereClause,
@@ -1143,15 +1125,9 @@ const getProducts = async (req, res, next) => {
     const userRole = req.user?.role
     const userClinicId = await getClinicIdFromReq(req)
 
-    let whereClause = {}
-    if (userRole !== 'SUPER_ADMIN' && userClinicId) {
-      whereClause = {
-        OR: [
-          { clinicId: userClinicId },
-          { clinicId: null }
-        ]
-      }
-    }
+    const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
+      ? {}
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     let products = await prisma.product.findMany({
       where: whereClause,
@@ -1246,16 +1222,22 @@ const deleteProduct = async (req, res, next) => {
 const getReports = async (req, res, next) => {
   try {
     const { startDate, endDate, period, practitioner, location, reportType } = req.query
+    const userRole = req.user?.role
+    const userClinicId = await getClinicIdFromReq(req)
 
-    // Fetch live data from MySQL tables via Prisma
+    const tenantFilter = (userRole === 'SUPER_ADMIN' && !userClinicId)
+      ? {}
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
+
+    // Fetch live data from MySQL tables via Prisma with strict Multi-Tenant isolation
     const [appointments, invoices, payments, patients, waitlists, branches, practitioners] = await Promise.all([
-      prisma.appointment.findMany({ orderBy: { createdAt: 'desc' } }).catch(() => []),
-      prisma.invoice.findMany({ orderBy: { createdAt: 'desc' } }).catch(() => []),
-      prisma.payment.findMany({ orderBy: { createdAt: 'desc' } }).catch(() => []),
-      prisma.patient.findMany({ orderBy: { createdAt: 'desc' } }).catch(() => []),
-      prisma.waitlist.findMany({ orderBy: { createdAt: 'desc' } }).catch(() => []),
-      prisma.branch.findMany().catch(() => []),
-      prisma.practitioner.findMany().catch(() => []),
+      prisma.appointment.findMany({ where: tenantFilter, orderBy: { createdAt: 'desc' } }).catch(() => []),
+      prisma.invoice.findMany({ where: tenantFilter, orderBy: { createdAt: 'desc' } }).catch(() => []),
+      prisma.payment.findMany({ where: tenantFilter, orderBy: { createdAt: 'desc' } }).catch(() => []),
+      prisma.patient.findMany({ where: tenantFilter, orderBy: { createdAt: 'desc' } }).catch(() => []),
+      prisma.waitlist.findMany({ where: tenantFilter, orderBy: { createdAt: 'desc' } }).catch(() => []),
+      prisma.branch.findMany({ where: tenantFilter }).catch(() => []),
+      prisma.practitioner.findMany({ where: tenantFilter }).catch(() => []),
     ])
 
     // Filter appointments by date range, practitioner, location if provided
@@ -1489,15 +1471,9 @@ const getDocuments = async (req, res, next) => {
     const userRole = req.user?.role
     const userClinicId = await getClinicIdFromReq(req)
 
-    let whereClause = {}
-    if (userRole !== 'SUPER_ADMIN' && userClinicId) {
-      whereClause = {
-        OR: [
-          { clinicId: userClinicId },
-          { clinicId: null }
-        ]
-      }
-    }
+    const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
+      ? {}
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     let documents = await prisma.document.findMany({
       where: whereClause,
@@ -2357,7 +2333,7 @@ const getSettingsTemplates = async (req, res, next) => {
 
     const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
       ? {}
-      : (userClinicId ? { OR: [{ clinicId: userClinicId }, { clinicId: null }] } : { clinicId: null })
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     let forms = await prisma.formTemplate.findMany({ where: whereClause, orderBy: { createdAt: 'desc' } }).catch(() => [])
     let letters = await prisma.letterTemplate.findMany({ where: whereClause, orderBy: { createdAt: 'desc' } }).catch(() => [])
@@ -2534,7 +2510,7 @@ const getServices = async (req, res, next) => {
 
     const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
       ? {}
-      : (userClinicId ? { OR: [{ clinicId: userClinicId }, { clinicId: null }] } : { clinicId: null })
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     let services = await prisma.serviceItem.findMany({
       where: whereClause,
@@ -2623,7 +2599,7 @@ const getCancellationReasons = async (req, res, next) => {
 
     const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
       ? {}
-      : (userClinicId ? { OR: [{ clinicId: userClinicId }, { clinicId: null }] } : { clinicId: null })
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     let reasons = await prisma.cancellationReason.findMany({ where: whereClause, orderBy: { createdAt: 'desc' } })
 
@@ -2692,7 +2668,7 @@ const getClientTags = async (req, res, next) => {
 
     const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
       ? {}
-      : (userClinicId ? { OR: [{ clinicId: userClinicId }, { clinicId: null }] } : { clinicId: null })
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     let tags = await prisma.clientTag.findMany({ where: whereClause, orderBy: { createdAt: 'desc' } })
 
@@ -2798,9 +2774,9 @@ const getDashboardStats = async (req, res, next) => {
     const userRole = req.user?.role
     const userClinicId = await getClinicIdFromReq(req)
 
-    const tenantFilter = (userRole !== 'SUPER_ADMIN' && userClinicId)
-      ? { OR: [{ clinicId: userClinicId }, { clinicId: null }] }
-      : {}
+    const tenantFilter = (userRole === 'SUPER_ADMIN' && !userClinicId)
+      ? {}
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     const today = new Date()
     const todayStr = today.toISOString().split('T')[0]
