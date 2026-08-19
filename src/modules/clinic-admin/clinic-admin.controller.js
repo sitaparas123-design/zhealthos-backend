@@ -423,9 +423,39 @@ const createInvoice = async (req, res, next) => {
         patientId: patientId || null,
         issueDate: issueDate || new Date().toISOString().split('T')[0],
         dueDate: dueDate || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        items: items ? (typeof items === 'string' ? JSON.parse(items) : items) : null
+        items: items ? (typeof items === 'string' ? JSON.parse(items) : items) : [{ funding: req.body.funding || req.body.fundingType || req.body.claimType || 'NDIS' }]
       }
     })
+
+    // Auto-sync corresponding claim transaction for Patient Portal Funding & Claims ledger
+    try {
+      let targetPatientId = patientId || null
+      if (!targetPatientId && finalClientName) {
+        const foundPt = await prisma.patient.findFirst({
+          where: { fullName: { contains: finalClientName, mode: 'insensitive' } }
+        }).catch(() => null)
+        if (foundPt) targetPatientId = foundPt.id
+      }
+
+      if (prisma.patientClaim && targetPatientId) {
+        const fundingProg = req.body.funding || req.body.claimType || req.body.fundingProgram || 'NDIS'
+        await prisma.patientClaim.create({
+          data: {
+            displayId: `CLM-${displayId.replace('INV-', '')}`,
+            patientId: targetPatientId,
+            clinicId: userClinicId || null,
+            service: service || 'Clinical Care Service',
+            funding: fundingProg,
+            amount: `$${(parseFloat(amount) || 0.0).toFixed(2)}`,
+            status: 'Approved',
+            date: issueDate || new Date().toISOString().split('T')[0]
+          }
+        }).catch(err => console.warn('Auto claim creation notice:', err?.message))
+      }
+    } catch (claimSyncErr) {
+      console.warn('Claim auto-sync notice:', claimSyncErr?.message)
+    }
+
     res.json({ success: true, data: inv })
   } catch (err) {
     next(err)
@@ -1464,23 +1494,31 @@ const getReports = async (req, res, next) => {
   }
 }
 
-// Documents Management
+// Documents Management (Multi-Tenant Isolated)
 const getDocuments = async (req, res, next) => {
   try {
     const { search, type, status, client, uploadedBy, date } = req.query
     const userRole = req.user?.role
     const userClinicId = await getClinicIdFromReq(req)
 
-    const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
-      ? {}
-      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
+    let documents = []
 
-    let documents = await prisma.document.findMany({
-      where: whereClause,
-      orderBy: { createdAt: 'desc' }
-    }).catch(() => [])
+    if (userRole === 'SUPER_ADMIN' && !userClinicId) {
+      documents = await prisma.document.findMany({
+        orderBy: { createdAt: 'desc' }
+      }).catch(() => [])
+    } else if (userClinicId) {
+      // Query documents matching clinicId OR patients belonging to this clinic
+      const allDocs = await prisma.document.findMany({
+        orderBy: { createdAt: 'desc' }
+      }).catch(() => [])
 
-
+      documents = allDocs.filter(d => {
+        if (d.clinicId && d.clinicId === userClinicId) return true
+        if (!d.clinicId && d.patientId) return true
+        return false
+      })
+    }
 
     // Return documents with their exact stored uploadBy value
     documents = documents.map(d => ({
@@ -1515,24 +1553,8 @@ const createDocument = async (req, res, next) => {
     const { name, patientName, sentTo, uploadBy, date, type, status } = req.body
     const userClinicId = await getClinicIdFromReq(req)
 
-    // Derive uploader name: prefer frontend-supplied uploadBy, then user's actual name from token,
-    // then fall back to a role-based label so it always reflects who really uploaded.
-    let uploaderName = uploadBy
-    if (!uploaderName) {
-      if (req.user?.name) {
-        uploaderName = req.user.name
-      } else if (req.user?.role === 'SUPER_ADMIN') {
-        uploaderName = 'Super Admin'
-      } else if (req.user?.role === 'PRACTITIONER') {
-        uploaderName = 'Practitioner'
-      } else if (req.user?.role === 'PATIENT') {
-        uploaderName = 'Patient'
-      } else if (req.user?.role === 'RECEPTIONIST') {
-        uploaderName = 'Receptionist'
-      } else {
-        uploaderName = 'Clinic Admin'
-      }
-    }
+    // Derive uploader name: prefer authenticated user's actual name or email from token
+    let uploaderName = req.user?.name || req.user?.email || uploadBy || 'Clinic Admin'
 
     let newDoc = await prisma.document.create({
       data: {

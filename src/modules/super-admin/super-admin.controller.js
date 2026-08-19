@@ -110,6 +110,64 @@ const getSubscriptions = async (req, res, next) => {
   }
 }
 
+// ---- MASTER SUBSCRIPTION PLANS (CATALOG) ----
+const getSubscriptionPlans = async (req, res, next) => {
+  try {
+    const plans = await prisma.subscriptionPlan.findMany({ orderBy: { monthlyPrice: 'asc' } })
+    res.json({ success: true, data: plans })
+  } catch (err) {
+    next(err)
+  }
+}
+
+const createSubscriptionPlan = async (req, res, next) => {
+  try {
+    const { name, monthlyPrice, features } = req.body
+    const newPlan = await prisma.subscriptionPlan.create({
+      data: {
+        name,
+        monthlyPrice: parseFloat(monthlyPrice),
+        features: features || [],
+      }
+    })
+    res.status(201).json({ success: true, data: newPlan })
+  } catch (err) {
+    next(err)
+  }
+}
+
+const updateSubscriptionPlan = async (req, res, next) => {
+  try {
+    const { id } = req.params
+    const { name, monthlyPrice, features, isActive } = req.body
+    
+    const data = {}
+    if (name !== undefined) data.name = name
+    if (monthlyPrice !== undefined) data.monthlyPrice = parseFloat(monthlyPrice)
+    if (features !== undefined) data.features = features
+    if (isActive !== undefined) data.isActive = isActive
+
+    const updatedPlan = await prisma.subscriptionPlan.update({
+      where: { id },
+      data
+    })
+    res.json({ success: true, data: updatedPlan })
+  } catch (err) {
+    next(err)
+  }
+}
+
+const deleteSubscriptionPlan = async (req, res, next) => {
+  try {
+    const { id } = req.params
+    await prisma.subscriptionPlan.delete({ where: { id } })
+    res.json({ success: true, message: 'Subscription Plan deleted' })
+  } catch (err) {
+    next(err)
+  }
+}
+// ---------------------------------------------
+
 const createSubscription = async (req, res, next) => {
   try {
     const { name, price, plan, billingCycle, amount, clinicName, status } = req.body
@@ -2733,6 +2791,10 @@ module.exports = {
   updateAdmin,
   deleteAdmin,
   getSubscriptions,
+  getSubscriptionPlans,
+  createSubscriptionPlan,
+  updateSubscriptionPlan,
+  deleteSubscriptionPlan,
   createSubscription,
   updateSubscription,
   deleteSubscription,

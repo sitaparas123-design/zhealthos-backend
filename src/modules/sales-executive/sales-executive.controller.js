@@ -367,7 +367,7 @@ const getClinics = async (req, res, next) => {
 const updateClinic = async (req, res, next) => {
   try {
     const { id } = req.params
-    const { name, email, phone, salesperson, revenue, tier, status } = req.body
+    const { name, email, phone, salesperson, revenue, tier, status, onboardingSteps } = req.body
 
     const dataToUpdate = {}
     if (name !== undefined) dataToUpdate.name = name
@@ -377,6 +377,7 @@ const updateClinic = async (req, res, next) => {
     if (revenue !== undefined) dataToUpdate.revenue = parseFloat(revenue) || 0
     if (tier !== undefined) dataToUpdate.tier = tier
     if (status !== undefined) dataToUpdate.status = status
+    if (onboardingSteps !== undefined) dataToUpdate.onboardingSteps = onboardingSteps
 
     const updated = await prisma.clinic.update({
       where: { id },
@@ -388,7 +389,15 @@ const updateClinic = async (req, res, next) => {
     next(err)
   }
 }
-
+const deleteClinic = async (req, res, next) => {
+  try {
+    const { id } = req.params
+    await prisma.clinic.delete({ where: { id } })
+    res.json({ success: true, message: 'Clinic deleted successfully' })
+  } catch (err) {
+    next(err)
+  }
+}
 
 const convertLead = async (req, res, next) => {
   try {
@@ -405,8 +414,8 @@ const convertLead = async (req, res, next) => {
 
     const assignedSalesperson = salesperson || (req.user ? req.user.name || req.user.email : 'Sales Executive')
 
-    // Perform atomic transaction for Clinic creation & Lead status update
-    const [clinic, updatedLead] = await prisma.$transaction(async (tx) => {
+    // Perform atomic transaction for Clinic, Branch, User, and UserBranch creation & Lead status update
+    const [clinic, updatedLead, generatedPassword] = await prisma.$transaction(async (tx) => {
       const createdClinic = await tx.clinic.create({
         data: {
           name: lead.companyName || lead.name || 'Converted Clinic',
@@ -420,6 +429,53 @@ const convertLead = async (req, res, next) => {
         }
       })
 
+      const mainBranch = await tx.branch.create({
+        data: {
+          clinicId: createdClinic.id,
+          name: 'Main Branch',
+          email: createdClinic.email,
+          phone: createdClinic.phone,
+          status: 'Active'
+        }
+      })
+
+      let defaultPassword = null
+      if (createdClinic.email && createdClinic.email.includes('@')) {
+        const bcrypt = require('bcryptjs')
+        defaultPassword = '12345678'
+        const passwordHash = await bcrypt.hash(defaultPassword, 10)
+
+        const adminUser = await tx.user.upsert({
+          where: { email: createdClinic.email.toLowerCase().trim() },
+          update: {
+            status: 'ACTIVE',
+            role: 'CLINIC_ADMIN'
+          },
+          create: {
+            email: createdClinic.email.toLowerCase().trim(),
+            passwordHash: passwordHash,
+            name: createdClinic.contactPerson || createdClinic.name || 'Clinic Admin',
+            phone: createdClinic.phone || null,
+            role: 'CLINIC_ADMIN',
+            status: 'ACTIVE'
+          }
+        })
+
+        await tx.userBranch.upsert({
+          where: {
+            userId_branchId: {
+              userId: adminUser.id,
+              branchId: mainBranch.id
+            }
+          },
+          update: {},
+          create: {
+            userId: adminUser.id,
+            branchId: mainBranch.id
+          }
+        })
+      }
+
       const history = Array.isArray(lead.history) ? lead.history : []
       history.push({ time: new Date().toISOString(), text: `Converted to Clinic successfully (Tier: ${tier || 'Basic'})` })
 
@@ -432,7 +488,7 @@ const convertLead = async (req, res, next) => {
         }
       })
 
-      return [createdClinic, leadUpdated]
+      return [createdClinic, leadUpdated, defaultPassword]
     })
 
     res.json({
@@ -567,6 +623,68 @@ const changeMyPassword = async (req, res, next) => {
   }
 }
 
+// ── SUBSCRIPTION PLANS ────────────────────────────────────────────────────────
+
+const getSubscriptionPlans = async (req, res, next) => {
+  try {
+    const plans = await prisma.subscriptionPlan.findMany({ 
+      where: { isActive: true },
+      orderBy: { monthlyPrice: 'asc' } 
+    })
+    res.json({ success: true, data: plans })
+  } catch (err) {
+    next(err)
+  }
+}
+
+// ── COMMISSIONS CONTROLLERS ───────────────────────────────────────────
+
+const getCommissions = async (req, res, next) => {
+  try {
+    const salesperson = req.user?.name || req.user?.email || 'Sales Executive'
+    const payouts = await prisma.commissionPayout.findMany({
+      where: { salesperson },
+      orderBy: { requestDate: 'desc' }
+    })
+    res.json({ success: true, data: payouts })
+  } catch (err) {
+    next(err)
+  }
+}
+
+const requestPayout = async (req, res, next) => {
+  try {
+    const { clinicId, clinicName, amount } = req.body
+    const salesperson = req.user?.name || req.user?.email || 'Sales Executive'
+
+    if (!clinicId || !clinicName || amount === undefined) {
+      return res.status(400).json({ success: false, message: 'Missing required fields' })
+    }
+
+    const payout = await prisma.commissionPayout.create({
+      data: {
+        clinicId,
+        clinicName,
+        salesperson,
+        amount: parseFloat(amount)
+      }
+    })
+
+    await prisma.salesMessage.create({
+      data: {
+        sender: salesperson,
+        recipient: 'Head Admin',
+        text: `🔔 Payout Request: Please release commission payment of $${parseFloat(amount).toFixed(2)} for converted clinic "${clinicName}".`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      }
+    })
+
+    res.json({ success: true, data: payout })
+  } catch (err) {
+    next(err)
+  }
+}
+
 module.exports = {
   getLeads,
   createLead,
@@ -586,7 +704,11 @@ module.exports = {
   sendMessage,
   getClinics,
   updateClinic,
+  deleteClinic,
   convertLead,
+  getSubscriptionPlans,
+  getCommissions,
+  requestPayout,
   getMyProfile,
   updateMyProfile,
   changeMyPassword,

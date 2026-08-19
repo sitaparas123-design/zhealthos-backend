@@ -28,7 +28,13 @@ router.post('/messages', auth, controller.sendMessage)
 
 router.get('/clinics', auth, controller.getClinics)
 router.put('/clinics/:id', auth, controller.updateClinic)
+router.delete('/clinics/:id', auth, controller.deleteClinic)
 router.post('/clinics/convert', auth, controller.convertLead)
+
+router.get('/subscription-plans', auth, controller.getSubscriptionPlans)
+
+router.get('/commissions', auth, controller.getCommissions)
+router.post('/commissions/request', auth, controller.requestPayout)
 
 router.get('/profile', auth, controller.getMyProfile)
 router.put('/profile', auth, controller.updateMyProfile)
