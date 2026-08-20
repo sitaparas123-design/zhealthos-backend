@@ -9,6 +9,7 @@ const salesRoutes = require('./modules/sales-executive/sales-executive.routes')
 const patientRoutes = require('./modules/patient/patient.routes')
 const aiRoutes = require('./modules/ai/ai.routes')
 const notificationRoutes = require('./modules/notification/notification.routes')
+const chatRoutes = require('./modules/chat/chat.routes')
 
 // Health check endpoint
 router.get('/health', (req, res) => {
@@ -31,21 +32,11 @@ router.use('/sales', salesRoutes)
 router.use('/patient', patientRoutes)
 router.use('/ai', aiRoutes)
 router.use('/notifications', notificationRoutes)
+router.use('/chat', chatRoutes)
 
 // Shared Message Board routes for authenticated users
 router.get('/message-board', authenticate, superAdminController.getMessageBoardItems)
 router.post('/message-board', authenticate, superAdminController.createMessageBoardItem)
 router.delete('/message-board/:id', authenticate, superAdminController.deleteMessageBoardItem)
-
-// Notifications endpoint
-router.get('/notifications', (req, res) => {
-  res.json({
-    success: true,
-    data: [
-      { id: 'n1', title: 'System Updated', message: 'ZHealth OS software updated successfully.', date: 'Just now', read: false },
-      { id: 'n2', title: 'Waitlist Alert', message: 'Patient added to waitlist queue.', date: '10 mins ago', read: false }
-    ]
-  })
-})
 
 module.exports = router

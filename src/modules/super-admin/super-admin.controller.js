@@ -113,8 +113,19 @@ const getSubscriptions = async (req, res, next) => {
 // ---- MASTER SUBSCRIPTION PLANS (CATALOG) ----
 const getSubscriptionPlans = async (req, res, next) => {
   try {
-    const plans = await prisma.subscriptionPlan.findMany({ orderBy: { monthlyPrice: 'asc' } })
-    res.json({ success: true, data: plans })
+    if (prisma.subscriptionPlan) {
+      const plans = await prisma.subscriptionPlan.findMany({ orderBy: { monthlyPrice: 'asc' } }).catch(() => null)
+      if (plans && plans.length > 0) {
+        return res.json({ success: true, data: plans })
+      }
+    }
+    const defaultPlans = [
+      { id: 'plan-starter', name: 'Starter Plan', monthlyPrice: 49, yearlyPrice: 490, features: ['1 Practitioner', 'Basic Scheduling', 'Email Support'], isActive: true },
+      { id: 'plan-basic', name: 'Basic Plan', monthlyPrice: 99, yearlyPrice: 990, features: ['Up to 3 Practitioners', 'Standard EHR & Billing', 'Priority Email Support'], isActive: true },
+      { id: 'plan-professional', name: 'Professional Plan', monthlyPrice: 199, yearlyPrice: 1990, features: ['Up to 10 Practitioners', 'Advanced Analytics & AI Notes', '24/7 Priority Support'], isActive: true },
+      { id: 'plan-enterprise', name: 'Enterprise Plan', monthlyPrice: 399, yearlyPrice: 3990, features: ['Unlimited Practitioners', 'Custom Integrations & API', 'Dedicated Account Manager'], isActive: true },
+    ]
+    res.json({ success: true, data: defaultPlans })
   } catch (err) {
     next(err)
   }

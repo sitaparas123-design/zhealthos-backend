@@ -187,7 +187,7 @@ const getPractitioners = async (req, res, next) => {
 
 const createPractitioner = async (req, res, next) => {
   try {
-    const { name, specialty, email, phone, status, color, consultationFee, assignedBranches, availability, qualifications, bio } = req.body
+    const { name, specialty, email, password, phone, status, color, consultationFee, assignedBranches, availability, qualifications, bio } = req.body
     if (!name || !email) {
       return res.status(400).json({ success: false, message: 'Name and Email are required' })
     }
@@ -209,7 +209,8 @@ const createPractitioner = async (req, res, next) => {
     if (!user) {
       const bcrypt = require('bcryptjs')
       const salt = await bcrypt.genSalt(10)
-      const passwordHash = await bcrypt.hash('password123', salt) // Default password
+      const plainPassword = (password && String(password).trim().length > 0) ? String(password).trim() : 'password123'
+      const passwordHash = await bcrypt.hash(plainPassword, salt)
       user = await prisma.user.create({
         data: {
           email: cleanEmail,
@@ -221,6 +222,15 @@ const createPractitioner = async (req, res, next) => {
         }
       })
     } else {
+      if (password && String(password).trim().length > 0) {
+        const bcrypt = require('bcryptjs')
+        const salt = await bcrypt.genSalt(10)
+        const passwordHash = await bcrypt.hash(String(password).trim(), salt)
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { passwordHash, role: 'PRACTITIONER', status: 'ACTIVE' }
+        }).catch(() => null)
+      }
       // Check if user is already linked to another practitioner
       const existingUserPractitioner = await prisma.practitioner.findFirst({
         where: { userId: user.id }
@@ -260,7 +270,7 @@ const createPractitioner = async (req, res, next) => {
 const updatePractitioner = async (req, res, next) => {
   try {
     const { id } = req.params
-    const { name, specialty, email, phone, status, color, consultationFee, assignedBranches, availability, qualifications, bio } = req.body
+    const { name, specialty, email, password, phone, status, color, consultationFee, assignedBranches, availability, qualifications, bio } = req.body
 
     const existingPractitioner = await prisma.practitioner.findUnique({
       where: { id }
@@ -270,6 +280,16 @@ const updatePractitioner = async (req, res, next) => {
     }
 
     const cleanEmail = email ? email.trim().toLowerCase() : undefined
+
+    if (password && String(password).trim().length > 0 && existingPractitioner.userId) {
+      const bcrypt = require('bcryptjs')
+      const salt = await bcrypt.genSalt(10)
+      const passwordHash = await bcrypt.hash(String(password).trim(), salt)
+      await prisma.user.update({
+        where: { id: existingPractitioner.userId },
+        data: { passwordHash }
+      }).catch(() => null)
+    }
 
     if (cleanEmail && cleanEmail !== existingPractitioner.email.toLowerCase()) {
       const emailTaken = await prisma.practitioner.findFirst({
@@ -550,6 +570,43 @@ const createAppointment = async (req, res, next) => {
     } = req.body
 
     const userClinicId = await getClinicIdFromReq(req)
+    const targetDate = date || new Date().toISOString().split('T')[0]
+
+    // Availability validation check
+    if (practitionerId || practitionerName) {
+      const prac = practitionerId
+        ? await prisma.practitioner.findUnique({ where: { id: practitionerId } })
+        : await prisma.practitioner.findFirst({
+            where: {
+              name: { contains: practitionerName.replace(/dr\.?\s*/i, '').trim() }
+            }
+          })
+
+      if (prac && prac.availability) {
+        const daysOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
+        const d = new Date(targetDate)
+        const dayName = daysOfWeek[d.getDay()]
+        let isAvailable = true
+        let availData = prac.availability
+        if (typeof availData === 'string') {
+          try { availData = JSON.parse(availData) } catch (e) {}
+        }
+        if (Array.isArray(availData)) {
+          const foundDay = availData.find(item => item.day?.toLowerCase() === dayName)
+          if (foundDay && (foundDay.available === false || foundDay.isAvailable === false)) isAvailable = false
+        } else if (typeof availData === 'object' && availData !== null) {
+          const dayKey = Object.keys(availData).find(k => k.toLowerCase() === dayName)
+          if (dayKey && (availData[dayKey].available === false || availData[dayKey].isAvailable === false)) isAvailable = false
+        }
+        if (!isAvailable) {
+          return res.status(400).json({
+            success: false,
+            isUnavailable: true,
+            message: `${prac.name} is configured as Unavailable on ${dayName.toUpperCase()}s in clinic availability schedule.`
+          })
+        }
+      }
+    }
 
     const count = await prisma.appointment.count().catch(() => 0)
     const displayId = `APT-${String(count + 1).padStart(6, '0')}`
@@ -569,7 +626,7 @@ const createAppointment = async (req, res, next) => {
         serviceName: serviceName || appointmentType || 'Consultation',
         branchId: branchId || null,
         branchName: branchName || null,
-        date: date || new Date().toISOString().split('T')[0],
+        date: targetDate,
         startTime: startTime || time || '09:00',
         endTime: endTime || '10:00',
         status: status || 'Confirmed',
@@ -689,7 +746,7 @@ const getPatients = async (req, res, next) => {
 const createPatient = async (req, res, next) => {
   try {
     const {
-      fullName, name, email, phone, dob, gender, address, suburb, city, state, postcode,
+      fullName, name, email, password, phone, dob, gender, address, suburb, city, state, postcode,
       emergencyContactName, emergencyContactPhone, medicareNumber, ndisNumber, privateHealthFund,
       notes, status, tags, diagnosis, alerts
     } = req.body
@@ -723,15 +780,16 @@ const createPatient = async (req, res, next) => {
       alerts: alerts ? (typeof alerts === 'string' ? alerts : (Array.isArray(alerts) ? alerts.join(', ') : JSON.stringify(alerts))) : null
     }
 
-    // Automatically create a PATIENT User account with default hashed password ('12345678')
+    // Automatically create a PATIENT User account with hashed password
     if (cleanData.email) {
       try {
         const normalizedEmail = cleanData.email.toLowerCase().trim()
         let existingUser = await prisma.user.findUnique({
           where: { email: normalizedEmail }
         })
+        const plainPassword = (password && String(password).trim().length > 0) ? String(password).trim() : '12345678'
+        const hashedPassword = await bcrypt.hash(plainPassword, 10)
         if (!existingUser) {
-          const hashedPassword = await bcrypt.hash('12345678', 10)
           existingUser = await prisma.user.create({
             data: {
               name: cleanData.fullName,
@@ -742,12 +800,17 @@ const createPatient = async (req, res, next) => {
               profileData: userClinicId ? { clinicId: userClinicId } : undefined
             }
           })
+        } else if (password && String(password).trim().length > 0) {
+          await prisma.user.update({
+            where: { id: existingUser.id },
+            data: { passwordHash: hashedPassword }
+          }).catch(() => null)
         }
         if (existingUser) {
           cleanData.userId = existingUser.id
         }
       } catch (userErr) {
-        console.error('⚠️ Notice: Could not auto-create User record for patient:', userErr.message)
+        console.warn('Notice creating patient login user:', userErr.message)
       }
     }
 

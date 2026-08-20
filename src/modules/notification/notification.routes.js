@@ -12,6 +12,9 @@ router.get('/', notificationController.getNotifications)
 // POST /api/notifications/broadcast
 router.post('/broadcast', notificationController.broadcastNotification)
 
+// PUT /api/notifications/mark-all-read
+router.put('/mark-all-read', notificationController.markAllAsRead)
+
 // PUT /api/notifications/:id/read
 router.put('/:id/read', notificationController.markAsRead)
 

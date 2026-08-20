@@ -24,6 +24,31 @@ function initSocket(httpServer) {
       console.log(`📡 Socket ${socket.id} left room: ${room}`)
     })
 
+    // Universal Live Chat real-time room events
+    socket.on('chat:join', (conversationId) => {
+      if (conversationId) {
+        socket.join(conversationId)
+      }
+    })
+
+    socket.on('chat:leave', (conversationId) => {
+      if (conversationId) {
+        socket.leave(conversationId)
+      }
+    })
+
+    socket.on('chat:typing', (data) => {
+      if (data?.conversationId) {
+        socket.to(data.conversationId).emit('chat:typing', data)
+      }
+    })
+
+    socket.on('chat:stop_typing', (data) => {
+      if (data?.conversationId) {
+        socket.to(data.conversationId).emit('chat:stop_typing', data)
+      }
+    })
+
     socket.on('disconnect', () => {
       console.log(`🔌 WebSocket Client disconnected: ${socket.id}`)
     })

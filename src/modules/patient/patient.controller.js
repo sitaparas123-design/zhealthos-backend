@@ -1,4 +1,5 @@
 const prisma = require('../../config/db')
+const { emitEvent } = require('../../config/socket')
 
 const findOrCreatePatient = async (reqUser) => {
   let patient = await prisma.patient.findFirst({
@@ -244,10 +245,28 @@ const createAppointment = async (req, res, next) => {
     let finalPracName = practitionerName
     let finalPracId = practitionerId
 
-    if (finalPracId && (!finalPracName || finalPracName === 'Dr. Sarah Jenkins')) {
+    if (finalPracId) {
       const pRecord = await prisma.practitioner.findUnique({ where: { id: finalPracId } }).catch(() => null)
-      if (pRecord && pRecord.name) {
-        finalPracName = pRecord.name
+      if (pRecord) {
+        if (pRecord.name) finalPracName = pRecord.name
+        
+        // Validate doctor availability
+        if (pRecord.availability && date) {
+          const bookingDateObj = new Date(date)
+          const dayName = bookingDateObj.toLocaleDateString('en-US', { weekday: 'long' }) // e.g. "Friday"
+          const av = pRecord.availability
+          const dayConfig = (typeof av === 'object' && !Array.isArray(av))
+            ? (av[dayName] || av[dayName.toLowerCase()])
+            : (Array.isArray(av) ? av.find(it => it.day?.toLowerCase() === dayName.toLowerCase()) : null)
+
+          if (dayConfig && (dayConfig.available === false || dayConfig.enabled === false || dayConfig.isWorking === false)) {
+            return res.status(400).json({
+              success: false,
+              isUnavailable: true,
+              message: `${pRecord.name || 'This doctor'} is unavailable on ${dayName}s (Day Off). Please choose another date.`
+            })
+          }
+        }
       }
     }
 
@@ -286,6 +305,26 @@ const rescheduleAppointment = async (req, res, next) => {
     const existing = await prisma.appointment.findUnique({ where: { id } })
     if (!existing) {
       return res.status(404).json({ success: false, message: 'Appointment not found' })
+    }
+
+    if (existing.practitionerId && date) {
+      const pRecord = await prisma.practitioner.findUnique({ where: { id: existing.practitionerId } }).catch(() => null)
+      if (pRecord && pRecord.availability) {
+        const bookingDateObj = new Date(date)
+        const dayName = bookingDateObj.toLocaleDateString('en-US', { weekday: 'long' })
+        const av = pRecord.availability
+        const dayConfig = (typeof av === 'object' && !Array.isArray(av))
+          ? (av[dayName] || av[dayName.toLowerCase()])
+          : (Array.isArray(av) ? av.find(it => it.day?.toLowerCase() === dayName.toLowerCase()) : null)
+
+        if (dayConfig && (dayConfig.available === false || dayConfig.enabled === false || dayConfig.isWorking === false)) {
+          return res.status(400).json({
+            success: false,
+            isUnavailable: true,
+            message: `${pRecord.name || 'This doctor'} is unavailable on ${dayName}s (Day Off). Please choose another date.`
+          })
+        }
+      }
     }
 
     const updated = await prisma.appointment.update({
@@ -333,6 +372,9 @@ const getPractitioners = async (req, res, next) => {
         name: true,
         specialty: true,
         email: true,
+        color: true,
+        availability: true,
+        assignedBranches: true
       },
     })
     res.json({ success: true, data: practitioners })
@@ -345,41 +387,42 @@ const getCareTeam = async (req, res, next) => {
   try {
     const patient = await findOrCreatePatient(req.user)
 
-    // Resolve patient's clinicId or associated appointments / practitioners
+    // Resolve patient's clinicId
     let patientClinicId = patient.clinicId || req.user?.clinicId || null
-    let apptPractitionerIds = []
-
-    if (prisma.appointment) {
+    if (!patientClinicId && prisma.appointment) {
       const appts = await prisma.appointment.findMany({
         where: { patientId: patient.id },
         orderBy: { createdAt: 'desc' }
       }).catch(() => [])
 
-      apptPractitionerIds = appts.map(a => a.practitionerId).filter(Boolean)
-      if (!patientClinicId && appts.length > 0) {
-        patientClinicId = appts.find(a => a.clinicId)?.clinicId || null
+      const matchedAppt = appts.find(a => a.clinicId)
+      if (matchedAppt?.clinicId) {
+        patientClinicId = matchedAppt.clinicId
+        await prisma.patient.update({ where: { id: patient.id }, data: { clinicId: patientClinicId } }).catch(() => null)
       }
     }
 
-    let dbPractitioners = []
-
-    if (prisma.practitioner) {
-      const allActive = await prisma.practitioner.findMany({
-        where: { status: 'Active' }
-      }).catch(() => [])
-
-      if (patientClinicId || apptPractitionerIds.length > 0) {
-        dbPractitioners = allActive.filter(p => {
-          if (patientClinicId && p.clinicId && p.clinicId === patientClinicId) return true
-          if (apptPractitionerIds.includes(p.id)) return true
-          return false
-        })
-      }
-
-      if (dbPractitioners.length === 0) {
-        dbPractitioners = allActive
+    if (!patientClinicId && prisma.appointment) {
+      const anyAppt = await prisma.appointment.findFirst({
+        where: { patientId: patient.id }
+      })
+      if (anyAppt?.practitionerId) {
+        const p = await prisma.practitioner.findUnique({ where: { id: anyAppt.practitionerId } })
+        if (p?.clinicId) {
+          patientClinicId = p.clinicId
+          await prisma.patient.update({ where: { id: patient.id }, data: { clinicId: patientClinicId } }).catch(() => null)
+        }
       }
     }
+
+    const whereClause = patientClinicId
+      ? { clinicId: patientClinicId, status: 'Active' }
+      : { status: 'Active' }
+
+    const dbPractitioners = await prisma.practitioner.findMany({
+      where: whereClause,
+      orderBy: { name: 'asc' }
+    }).catch(() => [])
 
     const formatted = dbPractitioners.map((p, idx) => ({
       id: p.id,
@@ -401,18 +444,173 @@ const getCareTeam = async (req, res, next) => {
   }
 }
 
+const getPatientClinicUsers = async (req, res, next) => {
+  try {
+    const patient = await findOrCreatePatient(req.user)
+
+    // Resolve patient's clinicId
+    let clinicId = patient.clinicId || req.user?.clinicId || null
+    if (!clinicId && prisma.appointment) {
+      const appt = await prisma.appointment.findFirst({
+        where: { patientId: patient.id, clinicId: { not: null } }
+      })
+      if (appt?.clinicId) {
+        clinicId = appt.clinicId
+        await prisma.patient.update({ where: { id: patient.id }, data: { clinicId } }).catch(() => null)
+      }
+    }
+
+    if (!clinicId && prisma.appointment) {
+      const anyAppt = await prisma.appointment.findFirst({
+        where: { patientId: patient.id }
+      })
+      if (anyAppt?.practitionerId) {
+        const p = await prisma.practitioner.findUnique({ where: { id: anyAppt.practitionerId } })
+        if (p?.clinicId) {
+          clinicId = p.clinicId
+          await prisma.patient.update({ where: { id: patient.id }, data: { clinicId } }).catch(() => null)
+        }
+      }
+    }
+
+    if (!clinicId) {
+      const clinicWithPractitioners = await prisma.practitioner.findFirst({
+        where: { status: 'Active', clinicId: { not: null } }
+      })
+      if (clinicWithPractitioners?.clinicId) {
+        clinicId = clinicWithPractitioners.clinicId
+      } else {
+        const firstClinic = await prisma.clinic.findFirst()
+        if (firstClinic) clinicId = firstClinic.id
+      }
+      if (clinicId) {
+        await prisma.patient.update({ where: { id: patient.id }, data: { clinicId } }).catch(() => null)
+      }
+    }
+
+    // Query ONLY practitioners belonging to THIS clinic
+    const clinicPractitioners = clinicId
+      ? await prisma.practitioner.findMany({
+          where: { clinicId: clinicId, status: 'Active' },
+          orderBy: { name: 'asc' }
+        })
+      : await prisma.practitioner.findMany({
+          where: { status: 'Active' },
+          take: 5
+        })
+
+    const clinic = clinicId ? await prisma.clinic.findUnique({ where: { id: clinicId } }) : null
+    const clinicName = clinic?.name || 'Clinic'
+
+    // Format list: only clinic users
+    const users = []
+
+    // 1. Real Practitioners of this clinic
+    clinicPractitioners.forEach((p, idx) => {
+      users.push({
+        id: p.id,
+        name: p.name,
+        role: p.specialty || 'Clinical Practitioner',
+        type: 'practitioner',
+        practitionerId: p.id,
+        avatar: p.avatarUrl || (idx % 2 === 0
+          ? 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?w=150'
+          : 'https://images.unsplash.com/photo-1622253692010-333f2da6031d?w=150'),
+        online: true,
+        clinicName
+      })
+    })
+
+    // 2. This clinic's Reception / Front Desk staff
+    users.push({
+      id: `reception_${clinicId || 'main'}`,
+      name: `${clinicName} Reception`,
+      role: 'Administrative & Front Desk',
+      type: 'reception',
+      practitionerId: null,
+      avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150',
+      online: true,
+      clinicName
+    })
+
+    res.json({ success: true, clinicId, clinicName, data: users })
+  } catch (err) {
+    next(err)
+  }
+}
+
 const getCareTeamMessages = async (req, res, next) => {
   try {
-    const userId = req.user.id
-    const user = await prisma.user.findUnique({ where: { id: userId }, include: { patient: true } })
-    const patientId = user?.patient?.id
+    const patient = await findOrCreatePatient(req.user)
+    const patientId = patient?.id
 
-    const messages = await prisma.careTeamMessage.findMany({
+    let messages = await prisma.careTeamMessage.findMany({
       where: {
         patientId: patientId
       },
       orderBy: { createdAt: 'asc' }
     })
+
+    // If no messages exist yet for this patient, fetch active practitioners from DB and initialize default welcoming conversations
+    if (!messages || messages.length === 0) {
+      const practitioners = await prisma.practitioner.findMany({
+        where: { status: 'Active' },
+        take: 3
+      }).catch(() => [])
+
+      const defaultConvs = []
+      if (practitioners.length > 0) {
+        practitioners.forEach(p => {
+          defaultConvs.push({
+            patientId,
+            practitionerId: p.id,
+            sender: 'doctor',
+            doctorName: p.name,
+            text: `Hello! I am ${p.name} (${p.specialty || 'Practitioner'}). Welcome to your personalized care portal. Feel free to message me regarding your exercises, pain levels, or treatment plan updates.`,
+            category: 'Treatment Questions'
+          })
+        })
+      } else {
+        defaultConvs.push({
+          patientId,
+          sender: 'doctor',
+          doctorName: 'Dr. Sarah Jenkins',
+          text: 'Hello! I am Dr. Sarah Jenkins. Welcome to your personalized care portal. Feel free to message me regarding your exercises, pain levels, or treatment plan updates.',
+          category: 'Treatment Questions'
+        })
+      }
+
+      defaultConvs.push(
+        {
+          patientId,
+          sender: 'reception',
+          doctorName: 'Clinic Reception',
+          text: 'Hi there! If you need to reschedule an appointment, verify branch hours, or check room availability, message our front desk here.',
+          category: 'Appointment Requests'
+        },
+        {
+          patientId,
+          sender: 'billing',
+          doctorName: 'Billing & Accounts',
+          text: 'Hello! I can help you with invoice copies, Medicare / NDIS claims, and private health rebate queries.',
+          category: 'Billing Questions'
+        },
+        {
+          patientId,
+          sender: 'support',
+          doctorName: 'ZealthOS Support Team',
+          text: 'Welcome to ZealthOS! If you encounter any technical difficulty with the portal or video calls, our team is standing by 24/7.',
+          category: 'General Questions'
+        }
+      )
+
+      await prisma.careTeamMessage.createMany({ data: defaultConvs }).catch(() => null)
+      messages = await prisma.careTeamMessage.findMany({
+        where: { patientId },
+        orderBy: { createdAt: 'asc' }
+      })
+    }
+
     res.json({ success: true, data: messages })
   } catch (err) {
     next(err)
@@ -421,26 +619,113 @@ const getCareTeamMessages = async (req, res, next) => {
 
 const sendCareTeamMessage = async (req, res, next) => {
   try {
-    const { practitionerId, doctorName, messageText, category } = req.body
-    
-    const userId = req.user.id
-    const user = await prisma.user.findUnique({ where: { id: userId }, include: { patient: true } })
-    
-    const newMessage = await prisma.careTeamMessage.create({
+    const { contactId, practitionerId, doctorName, messageText, category, text } = req.body
+    const content = messageText || text
+    if (!content) {
+      return res.status(400).json({ success: false, message: 'Message text is required' })
+    }
+
+    const patient = await findOrCreatePatient(req.user)
+    const patientName = patient.fullName || req.user.name || 'Patient'
+
+    // Determine target contact & recipient role
+    let target = doctorName || 'Dr. Sarah Jenkins'
+    let recipientType = 'doctor'
+    let notifTarget = 'PRACTITIONER'
+    let resolvedPractitionerId = practitionerId || null
+
+    if (contactId === 'reception' || doctorName?.toLowerCase().includes('reception')) {
+      target = 'Clinic Reception'
+      recipientType = 'reception'
+      notifTarget = 'CLINIC_ADMIN'
+    } else if (contactId === 'billing' || doctorName?.toLowerCase().includes('billing') || doctorName?.toLowerCase().includes('accounts')) {
+      target = 'Billing & Accounts'
+      recipientType = 'billing'
+      notifTarget = 'CLINIC_ADMIN'
+    } else if (contactId === 'support' || doctorName?.toLowerCase().includes('support')) {
+      target = 'ZealthOS Support Team'
+      recipientType = 'support'
+      notifTarget = 'SUPER_ADMIN'
+    } else {
+      if (contactId && contactId !== 'sarah' && !resolvedPractitionerId) {
+        const foundPractitioner = await prisma.practitioner.findUnique({
+          where: { id: contactId }
+        }).catch(() => null)
+        if (foundPractitioner) {
+          resolvedPractitionerId = foundPractitioner.id
+          target = foundPractitioner.name
+        }
+      }
+      recipientType = 'doctor'
+      notifTarget = 'PRACTITIONER'
+    }
+
+    // 1. Save patient message in DB
+    const patientMsg = await prisma.careTeamMessage.create({
       data: {
-        practitionerId: practitionerId || null,
-        patientId: user?.patient?.id || null,
+        practitionerId: resolvedPractitionerId,
+        patientId: patient.id,
         sender: 'patient',
-        doctorName: doctorName || 'Practitioner',
-        text: messageText,
+        doctorName: target,
+        text: content,
+        category: category || 'Treatment Questions'
+      }
+    })
+
+    // 2. Create in-app Notification for the recipient role (Practitioner / Clinic Admin / Super Admin)
+    await prisma.notification.create({
+      data: {
+        title: `Message from Patient ${patientName}`,
+        message: `[${target}] (${category || 'General'}): "${content.slice(0, 120)}${content.length > 120 ? '...' : ''}"`,
+        target: notifTarget,
+        type: 'inbox',
+        isRead: false,
+        userId: req.user.id
+      }
+    }).catch(() => null)
+
+    // 3. Emit real-time Socket.IO event for live desktop/mobile push
+    emitEvent('notification:new', {
+      title: `Patient Message (${patientName})`,
+      message: `To ${target}: ${content}`,
+      target: notifTarget
+    })
+    emitEvent('care_team:message', {
+      patientId: patient.id,
+      patientName,
+      practitionerId: resolvedPractitionerId,
+      sender: 'patient',
+      doctorName: target,
+      text: content,
+      category: category || 'Treatment Questions'
+    })
+
+    // 4. Generate and save contextual response in DB
+    let replyText = `Thank you for reaching out, ${patientName}. I've received your note regarding "${category || 'your query'}" and reviewed your update. Everything is logged in your medical file.`
+    if (recipientType === 'reception') {
+      replyText = `Hello ${patientName}, reception has noted your request for ${category || 'appointments'}. We will coordinate your slot and confirm shortly!`
+    } else if (recipientType === 'billing') {
+      replyText = `Hi ${patientName}, our accounts team has received your inquiry about ${category || 'billing'}. Your statement and claim status are currently being reviewed.`
+    } else if (recipientType === 'support') {
+      replyText = `Hi ${patientName}, ZealthOS technical support is on it! We've logged your request (${category || 'General Questions'}) and our team is assisting.`
+    }
+
+    const replyMsg = await prisma.careTeamMessage.create({
+      data: {
+        practitionerId: resolvedPractitionerId,
+        patientId: patient.id,
+        sender: recipientType,
+        doctorName: target,
+        text: replyText,
         category: category || 'Treatment Questions'
       }
     })
 
     res.json({
       success: true,
-      message: `Secure message delivered to ${doctorName || 'Practitioner'}`,
-      data: newMessage
+      message: `Secure message delivered to ${target}`,
+      data: patientMsg,
+      reply: replyMsg
     })
   } catch (err) {
     next(err)
@@ -2258,7 +2543,8 @@ module.exports = {
   revokeTrustedDevice,
   getFamilyProfiles,
   getPatientAchievements,
-  updatePatientAchievements
+  updatePatientAchievements,
+  getPatientClinicUsers
 }
 
 
