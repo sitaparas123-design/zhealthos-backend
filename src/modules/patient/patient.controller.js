@@ -343,18 +343,53 @@ const getPractitioners = async (req, res, next) => {
 
 const getCareTeam = async (req, res, next) => {
   try {
-    const dbPractitioners = await prisma.practitioner.findMany({
-      where: { status: 'Active' }
-    })
+    const patient = await findOrCreatePatient(req.user)
+
+    // Resolve patient's clinicId or associated appointments / practitioners
+    let patientClinicId = patient.clinicId || req.user?.clinicId || null
+    let apptPractitionerIds = []
+
+    if (prisma.appointment) {
+      const appts = await prisma.appointment.findMany({
+        where: { patientId: patient.id },
+        orderBy: { createdAt: 'desc' }
+      }).catch(() => [])
+
+      apptPractitionerIds = appts.map(a => a.practitionerId).filter(Boolean)
+      if (!patientClinicId && appts.length > 0) {
+        patientClinicId = appts.find(a => a.clinicId)?.clinicId || null
+      }
+    }
+
+    let dbPractitioners = []
+
+    if (prisma.practitioner) {
+      const allActive = await prisma.practitioner.findMany({
+        where: { status: 'Active' }
+      }).catch(() => [])
+
+      if (patientClinicId || apptPractitionerIds.length > 0) {
+        dbPractitioners = allActive.filter(p => {
+          if (patientClinicId && p.clinicId && p.clinicId === patientClinicId) return true
+          if (apptPractitionerIds.includes(p.id)) return true
+          return false
+        })
+      }
+
+      if (dbPractitioners.length === 0) {
+        dbPractitioners = allActive
+      }
+    }
 
     const formatted = dbPractitioners.map((p, idx) => ({
       id: p.id,
       name: p.name,
       specialty: p.specialty || 'General Practitioner',
       clinic: p.clinic || 'Main Clinic',
+      clinicId: p.clinicId,
       contact: p.phone || '',
       email: p.email || '',
-      lastAppt: p.joinDate || '',
+      lastAppt: p.joinDate || 'Recently',
       avatar: p.avatarUrl || (idx % 2 === 0
         ? 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150'
         : 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150')
@@ -946,15 +981,31 @@ const getFormsAndDocuments = async (req, res, next) => {
     let docs = []
 
     try {
-      if (prisma.patientForm && prisma.document) {
-        const patient = await findOrCreatePatient(req.user)
-        forms = await prisma.patientForm.findMany({
-          where: { patientId: patient.id },
+      const patient = await findOrCreatePatient(req.user)
+      const patientNameQuery = (patient.fullName || '').trim().toLowerCase()
+
+      if (prisma.patientForm) {
+        const rawForms = await prisma.patientForm.findMany({
           orderBy: { createdAt: 'asc' }
+        }).catch(() => [])
+
+        forms = rawForms.filter(f => {
+          if (f.patientId && f.patientId === patient.id) return true
+          const formPatient = (f.patientName || '').trim().toLowerCase()
+          return Boolean(patientNameQuery && formPatient.includes(patientNameQuery))
         })
-        docs = await prisma.document.findMany({
-          where: { patientId: patient.id },
+      }
+
+      if (prisma.document) {
+        const rawDocs = await prisma.document.findMany({
           orderBy: { createdAt: 'desc' }
+        }).catch(() => [])
+
+        docs = rawDocs.filter(d => {
+          if (d.patientId && d.patientId === patient.id) return true
+          const docPatient = (d.patientName || '').trim().toLowerCase()
+          const docSentTo = (d.sentTo || '').trim().toLowerCase()
+          return Boolean(patientNameQuery && (docPatient.includes(patientNameQuery) || docSentTo.includes(patientNameQuery)))
         })
       }
     } catch (dbErr) {
@@ -966,7 +1017,9 @@ const getFormsAndDocuments = async (req, res, next) => {
       name: d.name,
       type: d.type || 'Document',
       date: d.date || 'Recently',
-      size: d.size || '1.2 MB'
+      size: d.size || '1.2 MB',
+      uploadBy: d.uploadBy || 'Clinic Admin',
+      clinicId: d.clinicId
     }))
 
     let filteredForms = [...forms]
@@ -1036,6 +1089,19 @@ const uploadPatientDocument = async (req, res, next) => {
   try {
     const { name, type, size } = req.body
 
+    const patient = await findOrCreatePatient(req.user)
+    const uploaderName = req.body?.uploadBy || `${patient.fullName || req.user?.name || 'Patient'} (Patient)`
+
+    // Derive patient's clinicId for multi-tenant mapping
+    let patientClinicId = patient.clinicId || req.user?.clinicId || null
+    if (!patientClinicId && prisma.appointment) {
+      const lastAppt = await prisma.appointment.findFirst({
+        where: { patientId: patient.id },
+        orderBy: { createdAt: 'desc' }
+      }).catch(() => null)
+      if (lastAppt?.clinicId) patientClinicId = lastAppt.clinicId
+    }
+
     const newDoc = {
       id: `doc_${Date.now()}`,
       name: name || 'Uploaded_Medical_Scan.pdf',
@@ -1046,13 +1112,12 @@ const uploadPatientDocument = async (req, res, next) => {
 
     try {
       if (prisma.document) {
-        const patient = await findOrCreatePatient(req.user)
-        const uploaderName = req.body?.uploadBy || patient.fullName || req.user?.name || 'Patient'
         const dbCreated = await prisma.document.create({
           data: {
             name: newDoc.name,
             patientName: patient.fullName || 'Patient',
             patientId: patient.id,
+            clinicId: patientClinicId,
             date: 'Today',
             type: newDoc.type,
             status: 'Active',
@@ -1064,7 +1129,7 @@ const uploadPatientDocument = async (req, res, next) => {
         return res.json({ success: true, data: resultDoc })
       }
     } catch (dbErr) {
-      // fallback
+      console.warn('DB patient document upload notice:', dbErr.message)
     }
 
     inMemoryDocuments.unshift(newDoc)
@@ -1111,16 +1176,101 @@ const getFundingAndClaims = async (req, res, next) => {
     let claims = []
 
     try {
-      if (prisma.patientFundingAccount && prisma.patientClaim) {
-        const patient = await findOrCreatePatient(req.user)
-        accounts = await prisma.patientFundingAccount.findMany({
-          where: { patientId: patient.id },
-          orderBy: { createdAt: 'asc' }
-        })
+      const patient = await findOrCreatePatient(req.user)
+      const patientNameQuery = (patient.fullName || '').trim().toLowerCase()
+      const patientEmailQuery = (patient.email || '').trim().toLowerCase()
+
+      // 1. Fetch live claims from `prisma.patientClaim`
+      if (prisma.patientClaim) {
         claims = await prisma.patientClaim.findMany({
-          where: { patientId: patient.id },
+          where: {
+            OR: [
+              { patientId: patient.id },
+              ...(patient.clinicId ? [{ clinicId: patient.clinicId }] : [])
+            ]
+          },
           orderBy: { createdAt: 'desc' }
+        }).catch(() => [])
+      }
+
+      // 2. Fetch live invoices from primary `prisma.invoice` and unify as claim remittance items
+      if (prisma.invoice) {
+        const rawInvoices = await prisma.invoice.findMany({
+          orderBy: { createdAt: 'desc' }
+        }).catch(() => [])
+
+        const matchedPrimaryInvoices = rawInvoices.filter(inv => {
+          if (inv.patientId && inv.patientId === patient.id) return true
+          const invPatient = (inv.patientName || '').trim().toLowerCase()
+          const invClient = (inv.clientName || '').trim().toLowerCase()
+          const invRecipient = (inv.recipient || '').trim().toLowerCase()
+
+          if (patientNameQuery && (invPatient.includes(patientNameQuery) || invClient.includes(patientNameQuery) || invRecipient.includes(patientNameQuery))) return true
+          if (patientEmailQuery && invRecipient.includes(patientEmailQuery)) return true
+          return false
         })
+
+        const invoiceClaims = matchedPrimaryInvoices.map(inv => {
+          let resolvedFunding = inv.funding || inv.claimType || inv.fundingType || null
+          if (!resolvedFunding && inv.items) {
+            try {
+              const parsed = typeof inv.items === 'string' ? JSON.parse(inv.items) : inv.items
+              if (Array.isArray(parsed) && parsed[0]?.funding) resolvedFunding = parsed[0].funding
+              else if (typeof parsed === 'object' && parsed?.funding) resolvedFunding = parsed.funding
+            } catch (e) {}
+          }
+          if (!resolvedFunding) {
+            const svc = (inv.service || '').toLowerCase()
+            if (svc.includes('ndis')) resolvedFunding = 'NDIS'
+            else if (svc.includes('epc') || svc.includes('medicare')) resolvedFunding = 'EPC'
+            else if (svc.includes('workcover')) resolvedFunding = 'WorkCover'
+            else if (svc.includes('private')) resolvedFunding = 'Private'
+            else resolvedFunding = 'Medicare / Health Cover'
+          }
+
+          return {
+            id: `CLM-${(inv.displayId || inv.invoiceNumber || inv.id).replace('INV-', '')}`,
+            displayId: `CLM-${(inv.displayId || inv.invoiceNumber || inv.id).replace('INV-', '')}`,
+            service: inv.service || 'Clinical Services Consultation',
+            funding: resolvedFunding,
+            amount: `$${Number(inv.amount || inv.due || 0).toFixed(2)}`,
+            status: inv.status === 'Paid' ? 'Approved' : 'Processing',
+            date: inv.issueDate || inv.dueDate || new Date().toISOString().split('T')[0],
+            patientId: inv.patientId || patient.id,
+            clinicId: inv.clinicId
+          }
+        })
+
+        // Merge without duplicating existing IDs
+        for (const ic of invoiceClaims) {
+          if (!claims.some(c => c.id === ic.id || c.displayId === ic.displayId)) {
+            claims.push(ic)
+          }
+        }
+      }
+
+      // 3. Fetch active funding accounts from `prisma.patientFundingAccount`
+      if (prisma.patientFundingAccount) {
+        accounts = await prisma.patientFundingAccount.findMany({
+          where: {
+            OR: [
+              { patientId: patient.id },
+              ...(patient.clinicId ? [{ clinicId: patient.clinicId }] : [])
+            ]
+          },
+          orderBy: { createdAt: 'asc' }
+        }).catch(() => [])
+      }
+
+      // Deduplicate funding accounts by type to prevent duplicate cards
+      if (accounts.length > 0) {
+        const uniqueAccounts = []
+        for (const acc of accounts) {
+          if (!uniqueAccounts.some(u => (u.type || '').trim().toLowerCase() === (acc.type || '').trim().toLowerCase())) {
+            uniqueAccounts.push(acc)
+          }
+        }
+        accounts = uniqueAccounts
       }
     } catch (dbErr) {
       console.warn('DB funding and claims query notice:', dbErr.message)
@@ -1128,7 +1278,7 @@ const getFundingAndClaims = async (req, res, next) => {
 
     let filteredClaims = [...claims]
     if (funding && funding !== 'ALL') {
-      filteredClaims = filteredClaims.filter(c => (c.funding || '').toLowerCase() === funding.toLowerCase())
+      filteredClaims = filteredClaims.filter(c => (c.funding || '').toLowerCase().includes(funding.toLowerCase()))
     }
     if (status && status !== 'ALL') {
       filteredClaims = filteredClaims.filter(c => (c.status || '').toLowerCase() === status.toLowerCase())
@@ -1138,6 +1288,7 @@ const getFundingAndClaims = async (req, res, next) => {
       filteredClaims = filteredClaims.filter(c =>
         (c.service && c.service.toLowerCase().includes(q)) ||
         (c.id && String(c.id).toLowerCase().includes(q)) ||
+        (c.displayId && String(c.displayId).toLowerCase().includes(q)) ||
         (c.funding && c.funding.toLowerCase().includes(q))
       )
     }
@@ -1377,11 +1528,26 @@ const getHealthShares = async (req, res, next) => {
       pendingRequests = inMemoryPendingShareRequests
     }
 
+    let availableClinics = []
+    try {
+      if (prisma.clinic) {
+        const dbClinics = await prisma.clinic.findMany({
+          select: { name: true }
+        }).catch(() => [])
+        availableClinics = dbClinics.map(c => c.name).filter(Boolean)
+      }
+    } catch (err) {}
+
+    if (availableClinics.length === 0) {
+      availableClinics = ['Metro Rehab Centre', 'Footscray Physio & Ortho', 'East Melbourne Specialist Clinic']
+    }
+
     res.json({
       success: true,
       data: {
         activeShares,
-        pendingRequests
+        pendingRequests,
+        availableClinics
       }
     })
   } catch (err) {
@@ -1512,7 +1678,7 @@ const revokeHealthShare = async (req, res, next) => {
   }
 }
 
-// --- Patient Invoices ---
+// --- Patient Invoices & Multi-Tenant Payment Integration ---
 
 let inMemoryPatientInvoices = []
 
@@ -1522,16 +1688,78 @@ const getPatientInvoices = async (req, res, next) => {
     let invoices = []
 
     try {
-      if (prisma.patientInvoice) {
-        const patient = await findOrCreatePatient(req.user)
-        invoices = await prisma.patientInvoice.findMany({
-          where: { patientId: patient.id },
+      const patient = await findOrCreatePatient(req.user)
+      const patientNameQuery = (patient.fullName || '').trim().toLowerCase()
+      const patientEmailQuery = (patient.email || '').trim().toLowerCase()
+
+      // 1. Fetch live multi-tenant invoices from primary `prisma.invoice` table
+      if (prisma.invoice) {
+        const rawInvoices = await prisma.invoice.findMany({
           orderBy: { createdAt: 'desc' }
         })
-        invoices = invoices.map(i => ({ ...i, id: i.displayId || i.id }))
+
+        // Filter invoices matching patient ID, patient name, client name, or recipient
+        const matchedPrimaryInvoices = rawInvoices.filter(inv => {
+          if (inv.patientId && inv.patientId === patient.id) return true
+          const invPatient = (inv.patientName || '').trim().toLowerCase()
+          const invClient = (inv.clientName || '').trim().toLowerCase()
+          const invRecipient = (inv.recipient || '').trim().toLowerCase()
+
+          if (patientNameQuery && (invPatient.includes(patientNameQuery) || invClient.includes(patientNameQuery) || invRecipient.includes(patientNameQuery))) return true
+          if (patientEmailQuery && invRecipient.includes(patientEmailQuery)) return true
+          return false
+        })
+
+        invoices = matchedPrimaryInvoices.map(i => ({
+          id: i.displayId || i.invoiceNumber || i.id,
+          rawId: i.id,
+          displayId: i.displayId || i.invoiceNumber || i.id,
+          service: i.service || 'Clinical Consultation Service',
+          practitioner: i.practitionerName || 'General Practitioner',
+          amount: Number(i.amount || i.due || 0),
+          due: i.dueDate || i.issueDate || 'Net 7',
+          outstandingDue: Number(i.due || 0),
+          status: i.status || 'Draft',
+          clinicId: i.clinicId,
+          patientId: i.patientId || patient.id,
+          createdAt: i.createdAt
+        }))
+      }
+
+      // 2. Also check `prisma.patientInvoice` for legacy records if present
+      if (prisma.patientInvoice) {
+        const legacyInvoices = await prisma.patientInvoice.findMany({
+          where: { patientId: patient.id },
+          orderBy: { createdAt: 'desc' }
+        }).catch(() => [])
+
+        for (const leg of legacyInvoices) {
+          const legId = leg.displayId || leg.id
+          if (!invoices.some(inv => inv.id === legId || inv.rawId === leg.id)) {
+            invoices.push({
+              id: legId,
+              rawId: leg.id,
+              displayId: legId,
+              service: leg.service,
+              practitioner: leg.practitioner,
+              amount: Number(leg.amount || 0),
+              due: leg.due,
+              outstandingDue: leg.status === 'Paid' ? 0 : Number(leg.amount || 0),
+              status: leg.status,
+              clinicId: leg.clinicId,
+              patientId: leg.patientId,
+              createdAt: leg.createdAt
+            })
+          }
+        }
       }
     } catch (dbErr) {
       console.warn('DB patient invoices query notice:', dbErr.message)
+    }
+
+    // Merge in-memory fallback invoices if list is empty
+    if (invoices.length === 0 && inMemoryPatientInvoices.length > 0) {
+      invoices = [...inMemoryPatientInvoices]
     }
 
     let filtered = [...invoices]
@@ -1558,27 +1786,106 @@ const payPatientInvoice = async (req, res, next) => {
     const { id } = req.params
     const { paymentMethod } = req.body
 
+    const patient = await findOrCreatePatient(req.user)
+    let updatedInvoice = null
+
     try {
+      // 1. Check primary `prisma.invoice` table
+      if (prisma.invoice) {
+        const existingPrimary = await prisma.invoice.findFirst({
+          where: { OR: [{ id }, { displayId: id }, { invoiceNumber: id }] }
+        })
+
+        if (existingPrimary) {
+          updatedInvoice = await prisma.invoice.update({
+            where: { id: existingPrimary.id },
+            data: {
+              status: 'Paid',
+              due: 0.0,
+              updatedAt: new Date()
+            }
+          })
+
+          // Post transaction receipt into multi-tenant `prisma.payment` ledger
+          if (prisma.payment) {
+            const rcptCount = await prisma.payment.count().catch(() => 0)
+            const receiptNumber = `RCPT-${String(rcptCount + 1).padStart(6, '0')}`
+            await prisma.payment.create({
+              data: {
+                clinicId: existingPrimary.clinicId || null,
+                receiptNumber,
+                clientName: patient.fullName || existingPrimary.patientName || existingPrimary.clientName || 'Patient',
+                amount: existingPrimary.amount || 0.0,
+                paymentDate: new Date().toISOString().split('T')[0],
+                paymentMethod: paymentMethod === 'card' ? 'Stripe / Credit Card' : paymentMethod || 'Card',
+                invoiceReference: existingPrimary.displayId || existingPrimary.invoiceNumber || existingPrimary.id,
+                patientId: patient.id || existingPrimary.patientId
+              }
+            }).catch(e => console.warn('Payment receipt creation notice:', e.message))
+          }
+
+          // Also update `prisma.patientInvoice` if matching record exists
+          if (prisma.patientInvoice) {
+            await prisma.patientInvoice.updateMany({
+              where: { OR: [{ id }, { displayId: id }] },
+              data: { status: 'Paid', paymentMethod: paymentMethod || 'card', paidAt: new Date() }
+            }).catch(() => null)
+          }
+
+          return res.json({
+            success: true,
+            data: {
+              ...updatedInvoice,
+              id: updatedInvoice.displayId || updatedInvoice.invoiceNumber || updatedInvoice.id,
+              practitioner: updatedInvoice.practitionerName || 'General Practitioner',
+              service: updatedInvoice.service || 'Clinical Consultation',
+              status: 'Paid',
+              due: updatedInvoice.dueDate || 'Paid'
+            }
+          })
+        }
+      }
+
+      // 2. Check legacy `prisma.patientInvoice` table
       if (prisma.patientInvoice) {
-        const existing = await prisma.patientInvoice.findFirst({
+        const existingLegacy = await prisma.patientInvoice.findFirst({
           where: { OR: [{ id }, { displayId: id }] }
         })
-        if (existing) {
-          const updated = await prisma.patientInvoice.update({
-            where: { id: existing.id },
+        if (existingLegacy) {
+          const updatedLeg = await prisma.patientInvoice.update({
+            where: { id: existingLegacy.id },
             data: {
               status: 'Paid',
               paymentMethod: paymentMethod || 'card',
               paidAt: new Date()
             }
           })
-          return res.json({ success: true, data: { ...updated, id: updated.displayId || updated.id } })
+
+          if (prisma.payment) {
+            const rcptCount = await prisma.payment.count().catch(() => 0)
+            const receiptNumber = `RCPT-${String(rcptCount + 1).padStart(6, '0')}`
+            await prisma.payment.create({
+              data: {
+                clinicId: existingLegacy.clinicId || null,
+                receiptNumber,
+                clientName: patient.fullName || 'Patient',
+                amount: existingLegacy.amount || 0.0,
+                paymentDate: new Date().toISOString().split('T')[0],
+                paymentMethod: paymentMethod === 'card' ? 'Stripe / Credit Card' : paymentMethod || 'Card',
+                invoiceReference: existingLegacy.displayId || existingLegacy.id,
+                patientId: patient.id
+              }
+            }).catch(() => null)
+          }
+
+          return res.json({ success: true, data: { ...updatedLeg, id: updatedLeg.displayId || updatedLeg.id } })
         }
       }
     } catch (dbErr) {
-      // fallback
+      console.warn('DB pay patient invoice notice:', dbErr.message)
     }
 
+    // Fallback to in-memory list
     const idx = inMemoryPatientInvoices.findIndex(i => i.id === id)
     if (idx !== -1) {
       inMemoryPatientInvoices[idx].status = 'Paid'
@@ -1595,39 +1902,46 @@ const payPatientInvoice = async (req, res, next) => {
 const createPatientInvoice = async (req, res, next) => {
   try {
     const { service, practitioner, amount, due } = req.body
+    const patient = await findOrCreatePatient(req.user)
+
+    const count = await prisma.invoice.count().catch(() => 0)
+    const displayId = `INV-${String(count + 1).padStart(6, '0')}`
 
     const newInv = {
-      id: `INV-${Math.floor(1000 + Math.random() * 9000)}`,
+      displayId,
+      invoiceNumber: displayId,
       service: service || 'Allied Health Consultation',
-      practitioner: practitioner || 'Dr. Sarah Jenkins',
+      practitionerName: practitioner || 'General Practitioner',
+      patientName: patient.fullName || 'Patient',
+      clientName: patient.fullName || 'Patient',
+      patientId: patient.id,
       amount: amount ? Number(amount) : 120.00,
+      due: 0,
       status: 'Unpaid',
-      due: due || '19 Jul 2026'
+      dueDate: due || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
     }
 
     try {
-      if (prisma.patientInvoice) {
-        const patient = await findOrCreatePatient(req.user)
-        const dbCreated = await prisma.patientInvoice.create({
+      if (prisma.invoice) {
+        const dbCreated = await prisma.invoice.create({
+          data: newInv
+        })
+        return res.json({
+          success: true,
           data: {
-            displayId: newInv.id,
-            patientId: patient.id,
-            service: newInv.service,
-            practitioner: newInv.practitioner,
-            amount: newInv.amount,
-            status: newInv.status,
-            due: newInv.due
+            ...dbCreated,
+            id: dbCreated.displayId || dbCreated.invoiceNumber || dbCreated.id,
+            practitioner: dbCreated.practitionerName,
+            due: dbCreated.dueDate
           }
         })
-        inMemoryPatientInvoices.unshift({ ...dbCreated, id: dbCreated.displayId || dbCreated.id })
-        return res.json({ success: true, data: { ...dbCreated, id: dbCreated.displayId || dbCreated.id } })
       }
     } catch (dbErr) {
-      // fallback
+      console.warn('DB create invoice notice:', dbErr.message)
     }
 
-    inMemoryPatientInvoices.unshift(newInv)
-    res.json({ success: true, data: newInv })
+    inMemoryPatientInvoices.unshift({ ...newInv, id: displayId, practitioner: newInv.practitionerName, due: newInv.dueDate })
+    res.json({ success: true, data: { ...newInv, id: displayId, practitioner: newInv.practitionerName, due: newInv.dueDate } })
   } catch (err) {
     next(err)
   }
@@ -1638,12 +1952,20 @@ const deletePatientInvoice = async (req, res, next) => {
     const { id } = req.params
 
     try {
-      if (prisma.patientInvoice) {
-        const existing = await prisma.patientInvoice.findFirst({
-          where: { OR: [{ id }, { displayId: id }] }
+      if (prisma.invoice) {
+        const existing = await prisma.invoice.findFirst({
+          where: { OR: [{ id }, { displayId: id }, { invoiceNumber: id }] }
         })
         if (existing) {
-          await prisma.patientInvoice.delete({ where: { id: existing.id } })
+          await prisma.invoice.delete({ where: { id: existing.id } })
+        }
+      }
+      if (prisma.patientInvoice) {
+        const existingLeg = await prisma.patientInvoice.findFirst({
+          where: { OR: [{ id }, { displayId: id }] }
+        })
+        if (existingLeg) {
+          await prisma.patientInvoice.delete({ where: { id: existingLeg.id } }).catch(() => null)
         }
       }
     } catch (dbErr) {

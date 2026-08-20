@@ -70,6 +70,7 @@ const createClinic = async (req, res, next) => {
       data: {
         displayId: invDisplayId,
         invoiceNumber: `INV-${Math.floor(7000 + Math.random() * 2000)}`,
+        clinicId: clinic.id,
         patientName: clinic.name,
         issueDate: today,
         dueDate: today,
@@ -78,6 +79,20 @@ const createClinic = async (req, res, next) => {
         status: 'Overdue'
       }
     }).catch(() => null)
+
+    if (clinic.email) {
+      const cleanEmail = clinic.email.toLowerCase().trim()
+      const existingUser = await prisma.user.findUnique({ where: { email: cleanEmail } })
+      if (existingUser) {
+        const existingPData = (existingUser.profileData && typeof existingUser.profileData === 'object') ? existingUser.profileData : {}
+        await prisma.user.update({
+          where: { id: existingUser.id },
+          data: {
+            profileData: { ...existingPData, clinicId: clinic.id }
+          }
+        }).catch(() => null)
+      }
+    }
 
     res.json({ success: true, data: clinic })
   } catch (err) {
@@ -94,6 +109,64 @@ const getSubscriptions = async (req, res, next) => {
     next(err)
   }
 }
+
+// ---- MASTER SUBSCRIPTION PLANS (CATALOG) ----
+const getSubscriptionPlans = async (req, res, next) => {
+  try {
+    const plans = await prisma.subscriptionPlan.findMany({ orderBy: { monthlyPrice: 'asc' } })
+    res.json({ success: true, data: plans })
+  } catch (err) {
+    next(err)
+  }
+}
+
+const createSubscriptionPlan = async (req, res, next) => {
+  try {
+    const { name, monthlyPrice, features } = req.body
+    const newPlan = await prisma.subscriptionPlan.create({
+      data: {
+        name,
+        monthlyPrice: parseFloat(monthlyPrice),
+        features: features || [],
+      }
+    })
+    res.status(201).json({ success: true, data: newPlan })
+  } catch (err) {
+    next(err)
+  }
+}
+
+const updateSubscriptionPlan = async (req, res, next) => {
+  try {
+    const { id } = req.params
+    const { name, monthlyPrice, features, isActive } = req.body
+    
+    const data = {}
+    if (name !== undefined) data.name = name
+    if (monthlyPrice !== undefined) data.monthlyPrice = parseFloat(monthlyPrice)
+    if (features !== undefined) data.features = features
+    if (isActive !== undefined) data.isActive = isActive
+
+    const updatedPlan = await prisma.subscriptionPlan.update({
+      where: { id },
+      data
+    })
+    res.json({ success: true, data: updatedPlan })
+  } catch (err) {
+    next(err)
+  }
+}
+
+const deleteSubscriptionPlan = async (req, res, next) => {
+  try {
+    const { id } = req.params
+    await prisma.subscriptionPlan.delete({ where: { id } })
+    res.json({ success: true, message: 'Subscription Plan deleted' })
+  } catch (err) {
+    next(err)
+  }
+}
+// ---------------------------------------------
 
 const createSubscription = async (req, res, next) => {
   try {
@@ -478,7 +551,7 @@ const getAdmins = async (req, res, next) => {
 const createAdmin = async (req, res, next) => {
   try {
     const bcrypt = require('bcryptjs')
-    const { name, email, password, phone, role, status } = req.body
+    const { name, email, password, phone, role, status, clinicId, clinicName } = req.body
     if (!email || !name) {
       return res.status(400).json({ success: false, message: 'Name and Email are required' })
     }
@@ -501,6 +574,20 @@ const createAdmin = async (req, res, next) => {
       userRole = 'SUPER_ADMIN'
     }
 
+    let targetClinicId = clinicId || null
+    if (!targetClinicId && clinicName && userRole === 'CLINIC_ADMIN') {
+      const foundClinic = await prisma.clinic.findFirst({
+        where: { name: { contains: clinicName } }
+      }).catch(() => null)
+      if (foundClinic) targetClinicId = foundClinic.id
+    }
+    if (!targetClinicId && userRole === 'CLINIC_ADMIN') {
+      const foundClinic = await prisma.clinic.findFirst({
+        where: { email: lowerEmail }
+      }).catch(() => null)
+      if (foundClinic) targetClinicId = foundClinic.id
+    }
+
     const userStatus = status === 'Suspended' ? 'SUSPENDED' : status === 'Inactive' ? 'INACTIVE' : 'ACTIVE'
     const prefix = userRole === 'SUPER_ADMIN' || userRole === 'CLINIC_ADMIN' ? 'ADM' : userRole === 'SALES_EXECUTIVE' ? 'SLS' : 'USR'
     const displayId = await generateDisplayId('user', prefix)
@@ -514,6 +601,7 @@ const createAdmin = async (req, res, next) => {
         phone: phone || null,
         role: userRole,
         status: userStatus,
+        profileData: targetClinicId ? { clinicId: targetClinicId } : undefined
       },
     })
 
@@ -2703,6 +2791,10 @@ module.exports = {
   updateAdmin,
   deleteAdmin,
   getSubscriptions,
+  getSubscriptionPlans,
+  createSubscriptionPlan,
+  updateSubscriptionPlan,
+  deleteSubscriptionPlan,
   createSubscription,
   updateSubscription,
   deleteSubscription,

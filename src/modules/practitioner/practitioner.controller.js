@@ -1099,7 +1099,6 @@ async function getDashboardStats(req, res, next) {
 
 async function getBodyChartTemplates(req, res, next) {
   try {
-    // Find the practitioner record for the logged-in user
     const practitioner = await prisma.practitioner.findFirst({
       where: {
         OR: [
@@ -1109,12 +1108,12 @@ async function getBodyChartTemplates(req, res, next) {
       }
     })
 
+    const pracId = practitioner?.id || req.user.id
+
     let templates = await prisma.bodyChartTemplate.findMany({
-      where: practitioner ? { practitionerId: practitioner.id } : {},
+      where: { practitionerId: pracId },
       orderBy: { createdAt: 'desc' }
     })
-
-
 
     res.json({ success: true, data: templates })
   } catch (err) {
@@ -1133,12 +1132,14 @@ async function createBodyChartTemplate(req, res, next) {
       }
     })
 
+    const pracId = practitioner?.id || req.user.id
     const { name, description, thumbnailUrl, canvasData } = req.body
+
     const template = await prisma.bodyChartTemplate.create({
       data: {
-        practitionerId: practitioner?.id || null,
-        name,
-        description: description || null,
+        practitionerId: pracId,
+        name: name || 'Custom Body Chart Template',
+        description: description || 'Clinical evaluation template',
         thumbnailUrl: thumbnailUrl || null,
         canvasData: canvasData || null,
       }

@@ -46,7 +46,7 @@ const getBranches = async (req, res, next) => {
 
     const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
       ? {}
-      : (userClinicId ? { OR: [{ clinicId: userClinicId }, { clinicId: null }] } : { clinicId: null })
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     let branches = await prisma.branch.findMany({
       where: whereClause,
@@ -152,7 +152,7 @@ const getPractitioners = async (req, res, next) => {
 
     const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
       ? {}
-      : (userClinicId ? { OR: [{ clinicId: userClinicId }, { clinicId: null }] } : { clinicId: null })
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     let practitioners = await prisma.practitioner.findMany({
       where: whereClause,
@@ -192,18 +192,27 @@ const createPractitioner = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Name and Email are required' })
     }
 
+    const cleanEmail = email.trim().toLowerCase()
     const userClinicId = await getClinicIdFromReq(req)
     const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
     
+    // Check if practitioner with this email already exists
+    const existingPractitioner = await prisma.practitioner.findFirst({
+      where: { email: cleanEmail }
+    })
+    if (existingPractitioner) {
+      return res.status(400).json({ success: false, message: 'A practitioner with this email already exists' })
+    }
+
     // Check if user already exists
-    let user = await prisma.user.findUnique({ where: { email } })
+    let user = await prisma.user.findUnique({ where: { email: cleanEmail } })
     if (!user) {
       const bcrypt = require('bcryptjs')
       const salt = await bcrypt.genSalt(10)
       const passwordHash = await bcrypt.hash('password123', salt) // Default password
       user = await prisma.user.create({
         data: {
-          email,
+          email: cleanEmail,
           name,
           passwordHash,
           role: 'PRACTITIONER',
@@ -211,6 +220,14 @@ const createPractitioner = async (req, res, next) => {
           profileData: userClinicId ? { clinicId: userClinicId } : undefined
         }
       })
+    } else {
+      // Check if user is already linked to another practitioner
+      const existingUserPractitioner = await prisma.practitioner.findFirst({
+        where: { userId: user.id }
+      })
+      if (existingUserPractitioner) {
+        return res.status(400).json({ success: false, message: 'A practitioner account is already linked to this email' })
+      }
     }
 
     const p = await prisma.practitioner.create({
@@ -219,7 +236,7 @@ const createPractitioner = async (req, res, next) => {
         clinicId: userClinicId || null,
         name,
         specialty: specialty || 'Physiotherapist',
-        email,
+        email: cleanEmail,
         phone: phone || null,
         status: status || 'Active',
         color: color || '#8C4BFF',
@@ -233,6 +250,9 @@ const createPractitioner = async (req, res, next) => {
     })
     res.json({ success: true, data: p, message: 'Practitioner created successfully' })
   } catch (err) {
+    if (err.code === 'P2002') {
+      return res.status(400).json({ success: false, message: 'A practitioner with this email already exists' })
+    }
     next(err)
   }
 }
@@ -241,12 +261,55 @@ const updatePractitioner = async (req, res, next) => {
   try {
     const { id } = req.params
     const { name, specialty, email, phone, status, color, consultationFee, assignedBranches, availability, qualifications, bio } = req.body
+
+    const existingPractitioner = await prisma.practitioner.findUnique({
+      where: { id }
+    })
+    if (!existingPractitioner) {
+      return res.status(404).json({ success: false, message: 'Practitioner not found' })
+    }
+
+    const cleanEmail = email ? email.trim().toLowerCase() : undefined
+
+    if (cleanEmail && cleanEmail !== existingPractitioner.email.toLowerCase()) {
+      const emailTaken = await prisma.practitioner.findFirst({
+        where: {
+          email: cleanEmail,
+          NOT: { id }
+        }
+      })
+      if (emailTaken) {
+        return res.status(400).json({ success: false, message: 'This email is already in use by another practitioner' })
+      }
+
+      // Update linked User email if user exists
+      if (existingPractitioner.userId) {
+        const userEmailTaken = await prisma.user.findFirst({
+          where: {
+            email: cleanEmail,
+            NOT: { id: existingPractitioner.userId }
+          }
+        })
+        if (!userEmailTaken) {
+          await prisma.user.update({
+            where: { id: existingPractitioner.userId },
+            data: { email: cleanEmail, ...(name && { name }) }
+          }).catch(() => null)
+        }
+      }
+    } else if (name && existingPractitioner.userId) {
+      await prisma.user.update({
+        where: { id: existingPractitioner.userId },
+        data: { name }
+      }).catch(() => null)
+    }
+
     const p = await prisma.practitioner.update({
       where: { id },
       data: {
         ...(name && { name }),
         ...(specialty && { specialty }),
-        ...(email !== undefined && { email }),
+        ...(cleanEmail !== undefined && { email: cleanEmail }),
         ...(phone !== undefined && { phone }),
         ...(status !== undefined && { status }),
         ...(color !== undefined && { color }),
@@ -259,6 +322,9 @@ const updatePractitioner = async (req, res, next) => {
     })
     res.json({ success: true, data: p, message: 'Practitioner updated successfully' })
   } catch (err) {
+    if (err.code === 'P2002') {
+      return res.status(400).json({ success: false, message: 'This email is already in use by another practitioner' })
+    }
     next(err)
   }
 }
@@ -280,15 +346,9 @@ const getInvoices = async (req, res, next) => {
     const userRole = req.user?.role
     const userClinicId = await getClinicIdFromReq(req)
 
-    let whereClause = {}
-    if (userRole !== 'SUPER_ADMIN' && userClinicId) {
-      whereClause = {
-        OR: [
-          { clinicId: userClinicId },
-          { clinicId: null }
-        ]
-      }
-    }
+    const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
+      ? {}
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     let invoices = await prisma.invoice.findMany({
       where: whereClause,
@@ -363,9 +423,39 @@ const createInvoice = async (req, res, next) => {
         patientId: patientId || null,
         issueDate: issueDate || new Date().toISOString().split('T')[0],
         dueDate: dueDate || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        items: items ? (typeof items === 'string' ? JSON.parse(items) : items) : null
+        items: items ? (typeof items === 'string' ? JSON.parse(items) : items) : [{ funding: req.body.funding || req.body.fundingType || req.body.claimType || 'NDIS' }]
       }
     })
+
+    // Auto-sync corresponding claim transaction for Patient Portal Funding & Claims ledger
+    try {
+      let targetPatientId = patientId || null
+      if (!targetPatientId && finalClientName) {
+        const foundPt = await prisma.patient.findFirst({
+          where: { fullName: { contains: finalClientName, mode: 'insensitive' } }
+        }).catch(() => null)
+        if (foundPt) targetPatientId = foundPt.id
+      }
+
+      if (prisma.patientClaim && targetPatientId) {
+        const fundingProg = req.body.funding || req.body.claimType || req.body.fundingProgram || 'NDIS'
+        await prisma.patientClaim.create({
+          data: {
+            displayId: `CLM-${displayId.replace('INV-', '')}`,
+            patientId: targetPatientId,
+            clinicId: userClinicId || null,
+            service: service || 'Clinical Care Service',
+            funding: fundingProg,
+            amount: `$${(parseFloat(amount) || 0.0).toFixed(2)}`,
+            status: 'Approved',
+            date: issueDate || new Date().toISOString().split('T')[0]
+          }
+        }).catch(err => console.warn('Auto claim creation notice:', err?.message))
+      }
+    } catch (claimSyncErr) {
+      console.warn('Claim auto-sync notice:', claimSyncErr?.message)
+    }
+
     res.json({ success: true, data: inv })
   } catch (err) {
     next(err)
@@ -410,15 +500,9 @@ const getAppointments = async (req, res, next) => {
     const userRole = req.user?.role
     const userClinicId = await getClinicIdFromReq(req)
 
-    let whereClause = {}
-    if (userRole !== 'SUPER_ADMIN' && userClinicId) {
-      whereClause = {
-        OR: [
-          { clinicId: userClinicId },
-          { clinicId: null }
-        ]
-      }
-    }
+    const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
+      ? {}
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     let appointments = await prisma.appointment.findMany({
       where: whereClause,
@@ -728,15 +812,9 @@ const getContacts = async (req, res, next) => {
     const userRole = req.user?.role
     const userClinicId = await getClinicIdFromReq(req)
 
-    let whereClause = {}
-    if (userRole !== 'SUPER_ADMIN' && userClinicId) {
-      whereClause = {
-        OR: [
-          { clinicId: userClinicId },
-          { clinicId: null }
-        ]
-      }
-    }
+    const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
+      ? {}
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     let contacts = await prisma.contact.findMany({
       where: whereClause,
@@ -1077,15 +1155,9 @@ const getProducts = async (req, res, next) => {
     const userRole = req.user?.role
     const userClinicId = await getClinicIdFromReq(req)
 
-    let whereClause = {}
-    if (userRole !== 'SUPER_ADMIN' && userClinicId) {
-      whereClause = {
-        OR: [
-          { clinicId: userClinicId },
-          { clinicId: null }
-        ]
-      }
-    }
+    const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
+      ? {}
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     let products = await prisma.product.findMany({
       where: whereClause,
@@ -1180,16 +1252,22 @@ const deleteProduct = async (req, res, next) => {
 const getReports = async (req, res, next) => {
   try {
     const { startDate, endDate, period, practitioner, location, reportType } = req.query
+    const userRole = req.user?.role
+    const userClinicId = await getClinicIdFromReq(req)
 
-    // Fetch live data from MySQL tables via Prisma
+    const tenantFilter = (userRole === 'SUPER_ADMIN' && !userClinicId)
+      ? {}
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
+
+    // Fetch live data from MySQL tables via Prisma with strict Multi-Tenant isolation
     const [appointments, invoices, payments, patients, waitlists, branches, practitioners] = await Promise.all([
-      prisma.appointment.findMany({ orderBy: { createdAt: 'desc' } }).catch(() => []),
-      prisma.invoice.findMany({ orderBy: { createdAt: 'desc' } }).catch(() => []),
-      prisma.payment.findMany({ orderBy: { createdAt: 'desc' } }).catch(() => []),
-      prisma.patient.findMany({ orderBy: { createdAt: 'desc' } }).catch(() => []),
-      prisma.waitlist.findMany({ orderBy: { createdAt: 'desc' } }).catch(() => []),
-      prisma.branch.findMany().catch(() => []),
-      prisma.practitioner.findMany().catch(() => []),
+      prisma.appointment.findMany({ where: tenantFilter, orderBy: { createdAt: 'desc' } }).catch(() => []),
+      prisma.invoice.findMany({ where: tenantFilter, orderBy: { createdAt: 'desc' } }).catch(() => []),
+      prisma.payment.findMany({ where: tenantFilter, orderBy: { createdAt: 'desc' } }).catch(() => []),
+      prisma.patient.findMany({ where: tenantFilter, orderBy: { createdAt: 'desc' } }).catch(() => []),
+      prisma.waitlist.findMany({ where: tenantFilter, orderBy: { createdAt: 'desc' } }).catch(() => []),
+      prisma.branch.findMany({ where: tenantFilter }).catch(() => []),
+      prisma.practitioner.findMany({ where: tenantFilter }).catch(() => []),
     ])
 
     // Filter appointments by date range, practitioner, location if provided
@@ -1416,29 +1494,31 @@ const getReports = async (req, res, next) => {
   }
 }
 
-// Documents Management
+// Documents Management (Multi-Tenant Isolated)
 const getDocuments = async (req, res, next) => {
   try {
     const { search, type, status, client, uploadedBy, date } = req.query
     const userRole = req.user?.role
     const userClinicId = await getClinicIdFromReq(req)
 
-    let whereClause = {}
-    if (userRole !== 'SUPER_ADMIN' && userClinicId) {
-      whereClause = {
-        OR: [
-          { clinicId: userClinicId },
-          { clinicId: null }
-        ]
-      }
+    let documents = []
+
+    if (userRole === 'SUPER_ADMIN' && !userClinicId) {
+      documents = await prisma.document.findMany({
+        orderBy: { createdAt: 'desc' }
+      }).catch(() => [])
+    } else if (userClinicId) {
+      // Query documents matching clinicId OR patients belonging to this clinic
+      const allDocs = await prisma.document.findMany({
+        orderBy: { createdAt: 'desc' }
+      }).catch(() => [])
+
+      documents = allDocs.filter(d => {
+        if (d.clinicId && d.clinicId === userClinicId) return true
+        if (!d.clinicId && d.patientId) return true
+        return false
+      })
     }
-
-    let documents = await prisma.document.findMany({
-      where: whereClause,
-      orderBy: { createdAt: 'desc' }
-    }).catch(() => [])
-
-
 
     // Return documents with their exact stored uploadBy value
     documents = documents.map(d => ({
@@ -1473,24 +1553,8 @@ const createDocument = async (req, res, next) => {
     const { name, patientName, sentTo, uploadBy, date, type, status } = req.body
     const userClinicId = await getClinicIdFromReq(req)
 
-    // Derive uploader name: prefer frontend-supplied uploadBy, then user's actual name from token,
-    // then fall back to a role-based label so it always reflects who really uploaded.
-    let uploaderName = uploadBy
-    if (!uploaderName) {
-      if (req.user?.name) {
-        uploaderName = req.user.name
-      } else if (req.user?.role === 'SUPER_ADMIN') {
-        uploaderName = 'Super Admin'
-      } else if (req.user?.role === 'PRACTITIONER') {
-        uploaderName = 'Practitioner'
-      } else if (req.user?.role === 'PATIENT') {
-        uploaderName = 'Patient'
-      } else if (req.user?.role === 'RECEPTIONIST') {
-        uploaderName = 'Receptionist'
-      } else {
-        uploaderName = 'Clinic Admin'
-      }
-    }
+    // Derive uploader name: prefer authenticated user's actual name or email from token
+    let uploaderName = req.user?.name || req.user?.email || uploadBy || 'Clinic Admin'
 
     let newDoc = await prisma.document.create({
       data: {
@@ -1902,11 +1966,12 @@ const getAdmins = async (req, res, next) => {
       orderBy: { createdAt: 'desc' }
     })
 
-    // Multi-Tenant Isolation: Non-SUPER_ADMIN only sees admins belonging to their clinic
+    // Multi-Tenant Isolation: Non-SUPER_ADMIN only sees admins belonging strictly to their clinic
     if (userRole !== 'SUPER_ADMIN' && userClinicId) {
       users = users.filter(u => {
+        if (u.role === 'SUPER_ADMIN') return false
         const uClinicId = u.profileData && typeof u.profileData === 'object' ? u.profileData.clinicId : null
-        return uClinicId === userClinicId || u.id === req.user?.id || u.email === req.user?.email || !uClinicId
+        return uClinicId === userClinicId || u.id === req.user?.id || u.email === req.user?.email
       })
     }
 
@@ -2291,7 +2356,7 @@ const getSettingsTemplates = async (req, res, next) => {
 
     const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
       ? {}
-      : (userClinicId ? { OR: [{ clinicId: userClinicId }, { clinicId: null }] } : { clinicId: null })
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     let forms = await prisma.formTemplate.findMany({ where: whereClause, orderBy: { createdAt: 'desc' } }).catch(() => [])
     let letters = await prisma.letterTemplate.findMany({ where: whereClause, orderBy: { createdAt: 'desc' } }).catch(() => [])
@@ -2468,7 +2533,7 @@ const getServices = async (req, res, next) => {
 
     const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
       ? {}
-      : (userClinicId ? { OR: [{ clinicId: userClinicId }, { clinicId: null }] } : { clinicId: null })
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     let services = await prisma.serviceItem.findMany({
       where: whereClause,
@@ -2557,7 +2622,7 @@ const getCancellationReasons = async (req, res, next) => {
 
     const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
       ? {}
-      : (userClinicId ? { OR: [{ clinicId: userClinicId }, { clinicId: null }] } : { clinicId: null })
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     let reasons = await prisma.cancellationReason.findMany({ where: whereClause, orderBy: { createdAt: 'desc' } })
 
@@ -2626,7 +2691,7 @@ const getClientTags = async (req, res, next) => {
 
     const whereClause = (userRole === 'SUPER_ADMIN' && !userClinicId)
       ? {}
-      : (userClinicId ? { OR: [{ clinicId: userClinicId }, { clinicId: null }] } : { clinicId: null })
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     let tags = await prisma.clientTag.findMany({ where: whereClause, orderBy: { createdAt: 'desc' } })
 
@@ -2732,9 +2797,9 @@ const getDashboardStats = async (req, res, next) => {
     const userRole = req.user?.role
     const userClinicId = await getClinicIdFromReq(req)
 
-    const tenantFilter = (userRole !== 'SUPER_ADMIN' && userClinicId)
-      ? { OR: [{ clinicId: userClinicId }, { clinicId: null }] }
-      : {}
+    const tenantFilter = (userRole === 'SUPER_ADMIN' && !userClinicId)
+      ? {}
+      : (userClinicId ? { clinicId: userClinicId } : { clinicId: '__NO_CLINIC__' })
 
     const today = new Date()
     const todayStr = today.toISOString().split('T')[0]

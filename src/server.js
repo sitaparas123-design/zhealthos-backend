@@ -1,8 +1,8 @@
 require('dotenv').config()
+const http = require('http')
 const app = require('./app')
 const prisma = require('./config/db')
-
-// Trigger nodemon restart for backend syntax check
+const { initSocket } = require('./config/socket')
 
 const PORT = process.env.PORT || 5000
 
@@ -12,8 +12,14 @@ async function startServer() {
     await prisma.$connect()
     console.log('✅ Connected to MySQL Database successfully!')
 
-    const server = app.listen(PORT, () => {
+    const server = http.createServer(app)
+
+    // Initialize Socket.io real-time engine
+    initSocket(server)
+
+    server.listen(PORT, () => {
       console.log(`🚀 ZHealth OS Backend Server running on port ${PORT}`)
+      console.log(`⚡ WebSocket Server active on ws://localhost:${PORT}`)
       console.log(`📡 Environment: ${process.env.NODE_ENV || 'development'}`)
     })
 
@@ -33,3 +39,4 @@ async function startServer() {
 }
 
 startServer()
+

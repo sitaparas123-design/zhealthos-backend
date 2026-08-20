@@ -1,4 +1,5 @@
 const prisma = require('../../config/db')
+const { emitEvent } = require('../../config/socket')
 
 // Map JWT roles to Prisma Notification target role strings
 const getNotificationRoleString = (role) => {
@@ -110,6 +111,9 @@ const broadcastNotification = async (req, res) => {
     // Also, let's create a corresponding 'inbox' item for recipients or handle it dynamically in getNotifications.
     // By keeping it dynamic, `getNotifications` matches target: targetRole, which matches all users with that role automatically.
     // So we only need to write ONE record to the database! Beautiful and efficient.
+
+    // Broadcast live Socket.io notification event
+    emitEvent('notification:new', notification)
 
     return res.json({
       success: true,

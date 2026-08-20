@@ -79,6 +79,7 @@ model Clinic {
   aiUsageCount  Int?     @default(0)
   aiUsageLimit  Int?     @default(200)
   lastBillingReset DateTime?
+  onboardingSteps Json?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -462,6 +463,19 @@ model Subscription {
   clinic Clinic? @relation(fields: [clinicId], references: [id], onDelete: SetNull)
 
   @@map("subscriptions")
+}
+
+model SubscriptionPlan {
+  id           String   @id @default(uuid())
+  name         String   @unique
+  monthlyPrice Float
+  yearlyPrice  Float?
+  features     Json?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("subscription_plans")
 }
 
 model FormTemplate {
@@ -979,4 +993,17 @@ model ApiKey {
   updatedAt DateTime @updatedAt
 
   @@map("api_keys")
+}
+
+model CommissionPayout {
+  id          String    @id @default(uuid())
+  clinicId    String
+  clinicName  String
+  salesperson String
+  amount      Float
+  status      String    @default("Pending") // Pending, Paid, Rejected
+  requestDate DateTime  @default(now())
+  paidDate    DateTime?
+  
+  @@map("commission_payouts")
 }
