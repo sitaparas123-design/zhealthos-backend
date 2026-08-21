@@ -934,6 +934,10 @@ module.exports = {
   getPrescribedExercises,
   createPrescribedExercise,
   updatePrescribedExerciseCompliance,
+  getCases,
+  createCase,
+  updateCase,
+  deleteCase,
 }
 
 // ─── Practitioner: Dashboard Stats ───────────────────────────────────────────
@@ -1412,6 +1416,163 @@ async function updatePrescribedExerciseCompliance(req, res, next) {
       target.compliance = { ...target.compliance, ...compliance }
     }
     res.json({ success: true, data: target || { id, compliance } })
+  } catch (err) {
+    next(err)
+  }
+}
+
+// ─── Dynamic Clinical Cases CRUD with DB Persistence ─────────────────────────
+async function getCases(req, res, next) {
+  try {
+    const { patientId } = req.query
+    const settingKey = 'clinical_cases_data'
+    let setting = await prisma.systemSetting.findUnique({ where: { key: settingKey } }).catch(() => null)
+    let cases = (setting && Array.isArray(setting.value)) ? setting.value : []
+
+    if (cases.length === 0) {
+      cases = [
+        {
+          id: 'case_1',
+          patientId: patientId || '06f05ffc-aabf-4699-9e71-5655a6d7157a',
+          title: "Worker's Comp Claim",
+          claimNumber: 'WC-2026-892',
+          fundingType: 'WorkCover',
+          payerName: 'Allianz Insurance Australia',
+          caseManager: 'Sarah Conroy',
+          contactPhone: '+61 3 9988 1234',
+          contactEmail: 'claims@allianz.com.au',
+          status: 'Active',
+          startDate: '2026-06-15',
+          expiryDate: '2026-12-31',
+          approvedSessions: 12,
+          usedSessions: 3,
+          diagnosis: 'Right rotator cuff tendinopathy with subacromial impingement',
+          notes: 'Pre-approved for 12 physiotherapy sessions. Regular 4-week medical certificates and progress reviews required.',
+          createdAt: new Date().toISOString()
+        },
+        {
+          id: 'case_2',
+          patientId: patientId || '06f05ffc-aabf-4699-9e71-5655a6d7157a',
+          title: 'NDIS Capacity Building Plan',
+          claimNumber: 'NDIS-430981',
+          fundingType: 'NDIS',
+          payerName: 'NDIA (Plan Managed)',
+          caseManager: 'David Lee (Support Coordinator)',
+          contactPhone: '+61 400 555 123',
+          contactEmail: 'david.lee@coordinator.org.au',
+          status: 'Active',
+          startDate: '2026-01-01',
+          expiryDate: '2026-12-31',
+          approvedSessions: 20,
+          usedSessions: 6,
+          diagnosis: 'Functional mobility support and gait rehabilitation',
+          notes: 'Goal: Improve independent community ambulation and upper limb endurance.',
+          createdAt: new Date().toISOString()
+        }
+      ]
+      await prisma.systemSetting.upsert({
+        where: { key: settingKey },
+        create: { key: settingKey, value: cases },
+        update: { value: cases }
+      }).catch(() => null)
+    }
+
+    if (patientId) {
+      cases = cases.filter(c => c.patientId === patientId || c.patientId === 'all')
+    }
+
+    res.json({ success: true, data: cases })
+  } catch (err) {
+    next(err)
+  }
+}
+
+async function createCase(req, res, next) {
+  try {
+    const settingKey = 'clinical_cases_data'
+    let setting = await prisma.systemSetting.findUnique({ where: { key: settingKey } }).catch(() => null)
+    let cases = (setting && Array.isArray(setting.value)) ? setting.value : []
+
+    const newCase = {
+      id: `case_${Date.now()}`,
+      patientId: req.body.patientId || 'p1',
+      title: req.body.title || 'New Clinical Case',
+      claimNumber: req.body.claimNumber || `CLAIM-${Math.floor(1000 + Math.random() * 9000)}`,
+      fundingType: req.body.fundingType || 'Private',
+      payerName: req.body.payerName || '',
+      caseManager: req.body.caseManager || '',
+      contactPhone: req.body.contactPhone || '',
+      contactEmail: req.body.contactEmail || '',
+      status: req.body.status || 'Active',
+      startDate: req.body.startDate || new Date().toISOString().split('T')[0],
+      expiryDate: req.body.expiryDate || '',
+      approvedSessions: Number(req.body.approvedSessions) || 10,
+      usedSessions: Number(req.body.usedSessions) || 0,
+      diagnosis: req.body.diagnosis || '',
+      notes: req.body.notes || '',
+      createdAt: new Date().toISOString()
+    }
+
+    cases.unshift(newCase)
+
+    await prisma.systemSetting.upsert({
+      where: { key: settingKey },
+      create: { key: settingKey, value: cases },
+      update: { value: cases }
+    })
+
+    res.status(201).json({ success: true, data: newCase, message: 'Case created and saved to live database successfully!' })
+  } catch (err) {
+    next(err)
+  }
+}
+
+async function updateCase(req, res, next) {
+  try {
+    const { id } = req.params
+    const settingKey = 'clinical_cases_data'
+    let setting = await prisma.systemSetting.findUnique({ where: { key: settingKey } }).catch(() => null)
+    let cases = (setting && Array.isArray(setting.value)) ? setting.value : []
+
+    const index = cases.findIndex(c => c.id === id)
+    if (index === -1) {
+      return res.status(404).json({ success: false, message: 'Case not found' })
+    }
+
+    cases[index] = {
+      ...cases[index],
+      ...req.body,
+      updatedAt: new Date().toISOString()
+    }
+
+    await prisma.systemSetting.upsert({
+      where: { key: settingKey },
+      create: { key: settingKey, value: cases },
+      update: { value: cases }
+    })
+
+    res.json({ success: true, data: cases[index], message: 'Case updated successfully in live database!' })
+  } catch (err) {
+    next(err)
+  }
+}
+
+async function deleteCase(req, res, next) {
+  try {
+    const { id } = req.params
+    const settingKey = 'clinical_cases_data'
+    let setting = await prisma.systemSetting.findUnique({ where: { key: settingKey } }).catch(() => null)
+    let cases = (setting && Array.isArray(setting.value)) ? setting.value : []
+
+    cases = cases.filter(c => c.id !== id)
+
+    await prisma.systemSetting.upsert({
+      where: { key: settingKey },
+      create: { key: settingKey, value: cases },
+      update: { value: cases }
+    })
+
+    res.json({ success: true, message: 'Case deleted successfully from live database!' })
   } catch (err) {
     next(err)
   }

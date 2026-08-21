@@ -57,6 +57,12 @@ router.post('/patients', controller.createPatient)
 router.put('/patients/:id', controller.updatePatient)
 router.delete('/patients/:id', controller.deletePatient)
 
+const practitionerController = require('../practitioner/practitioner.controller')
+router.get('/cases', practitionerController.getCases)
+router.post('/cases', practitionerController.createCase)
+router.put('/cases/:id', practitionerController.updateCase)
+router.delete('/cases/:id', practitionerController.deleteCase)
+
 router.get('/contacts', controller.getContacts)
 router.get('/contacts/:id', controller.getContactById)
 router.post('/contacts', controller.createContact)

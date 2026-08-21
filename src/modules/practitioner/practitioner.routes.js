@@ -33,6 +33,11 @@ router.get('/patients', controller.getPatients)
 router.post('/patients', controller.createPatient)
 router.put('/patients/:id', controller.updatePatient)
 
+router.get('/cases', controller.getCases)
+router.post('/cases', controller.createCase)
+router.put('/cases/:id', controller.updateCase)
+router.delete('/cases/:id', controller.deleteCase)
+
 router.get('/payments', controller.getPayments)
 router.post('/payments', controller.createPayment)
 router.put('/payments/:id', controller.updatePayment)
