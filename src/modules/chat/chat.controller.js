@@ -43,13 +43,25 @@ const getChatContacts = async (req, res, next) => {
   try {
     await initChatTable()
     const user = req.user
-    const userRole = (user.role || '').toUpperCase()
+    const rawRole = (user.role || '').toUpperCase().trim()
     const currentUserId = user.id
+
+    const isSuperAdmin = rawRole === 'SUPER_ADMIN' || rawRole === 'HEAD_ADMIN' || rawRole === 'SUPER-ADMIN' || rawRole === 'SUPER ADMIN'
+    const isClinicAdmin = !isSuperAdmin && (rawRole === 'CLINIC_ADMIN' || rawRole === 'CLINIC' || rawRole === 'ADMIN' || rawRole === 'CLINIC ADMIN')
+    const isPractitioner = !isSuperAdmin && !isClinicAdmin && (rawRole === 'PRACTITIONER' || rawRole === 'DOCTOR')
+    const isSales = !isSuperAdmin && !isClinicAdmin && !isPractitioner && (rawRole === 'SALES_EXECUTIVE' || rawRole === 'SALES' || rawRole === 'SALES EXECUTIVE')
+    const isPatient = !isSuperAdmin && !isClinicAdmin && !isPractitioner && !isSales && (rawRole === 'PATIENT')
 
     let clinicId = user.clinicId || user.profileData?.clinicId || null
     let contacts = []
 
-    if (userRole === 'PATIENT') {
+    // Resolve Super Admin Auth User for platform HQ channel
+    const superAdminUser = await prisma.user.findFirst({
+      where: { role: 'SUPER_ADMIN' }
+    }).catch(() => null)
+    const superAdminId = superAdminUser?.id || 'super_admin_hq'
+
+    if (isPatient) {
       // 1. Resolve Patient's Clinic
       const patient = await prisma.patient.findFirst({
         where: { OR: [{ userId: currentUserId }, { email: user.email }] }
@@ -100,7 +112,7 @@ const getChatContacts = async (req, res, next) => {
         online: true,
         badgeColor: '#8C4BFF'
       })
-    } else if (userRole === 'PRACTITIONER') {
+    } else if (isPractitioner) {
       // 2. Practitioner Contacts: Clinic Patients & Clinic Admin & Fellow Doctors
       const pract = await prisma.practitioner.findFirst({
         where: { OR: [{ userId: currentUserId }, { email: user.email }] }
@@ -158,8 +170,8 @@ const getChatContacts = async (req, res, next) => {
           badgeColor: '#3B82F6'
         })
       })
-    } else if (userRole === 'CLINIC_ADMIN') {
-      // 3. Clinic Admin Contacts: Clinic Practitioners & Patients
+    } else if (isClinicAdmin) {
+      // 3. Clinic Admin Contacts: Platform HQ (Super Admin), Clinic Practitioners & Patients
       if (prisma.clinic && !clinicId) {
         const c = await prisma.clinic.findFirst().catch(() => null)
         if (c) clinicId = c.id
@@ -172,6 +184,19 @@ const getChatContacts = async (req, res, next) => {
       ])
 
       const clinicName = clinic?.name || 'Clinic'
+
+      // Always include Super Admin / HQ Channel
+      contacts.push({
+        id: superAdminId,
+        targetId: superAdminId,
+        name: superAdminUser?.name || 'ZealthOS Platform Admin',
+        role: 'Super Admin HQ',
+        roleCategory: 'HEAD_ADMIN',
+        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+        clinicName: 'ZealthOS HQ',
+        online: true,
+        badgeColor: '#8C4BFF'
+      })
 
       practitioners.forEach(p => {
         contacts.push({
@@ -200,15 +225,28 @@ const getChatContacts = async (req, res, next) => {
           badgeColor: '#3B82F6'
         })
       })
-    } else if (userRole === 'SALES_EXECUTIVE') {
-      // 4. Sales Executive Contacts: Leads & Sales Team
+    } else if (isSales) {
+      // 4. Sales Executive Contacts: Platform HQ (Super Admin), Leads & Sales Team
       const [leads, salesReps] = await Promise.all([
         prisma.salesLead ? prisma.salesLead.findMany({ take: 10, orderBy: { createdAt: 'desc' } }).catch(() => []) : [],
         prisma.salesUser ? prisma.salesUser.findMany({ take: 5 }).catch(() => []) : []
       ])
 
+      // Always include Super Admin / HQ Channel
+      contacts.push({
+        id: superAdminId,
+        targetId: superAdminId,
+        name: superAdminUser?.name || 'ZealthOS Platform Admin',
+        role: 'Super Admin HQ',
+        roleCategory: 'HEAD_ADMIN',
+        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+        clinicName: 'ZealthOS HQ',
+        online: true,
+        badgeColor: '#8C4BFF'
+      })
+
       salesReps.forEach(s => {
-        if (s.email !== user.email) {
+        if (s.email?.toLowerCase().trim() !== user.email?.toLowerCase().trim()) {
           contacts.push({
             id: s.id,
             targetId: s.id,
@@ -237,12 +275,21 @@ const getChatContacts = async (req, res, next) => {
         })
       })
     } else {
-      // 5. Super Admin: Platform Clinics & Admins
-      const clinics = await prisma.clinic.findMany({ take: 10 }).catch(() => [])
+      // 5. Super Admin / Head Admin: Platform Clinic Admins & Sales Executives ONLY (No Practitioners, No Patients)
+      const [clinics, salesUsers, clinicAuthUsers, salesAuthUsers] = await Promise.all([
+        prisma.clinic.findMany({ orderBy: { name: 'asc' } }).catch(() => []),
+        prisma.salesUser ? prisma.salesUser.findMany({ orderBy: { name: 'asc' } }).catch(() => []) : [],
+        prisma.user ? prisma.user.findMany({ where: { role: 'CLINIC_ADMIN' } }).catch(() => []) : [],
+        prisma.user ? prisma.user.findMany({ where: { role: 'SALES_EXECUTIVE' } }).catch(() => []) : []
+      ])
+
       clinics.forEach(c => {
+        const cAuth = clinicAuthUsers.find(u => u.clinicId === c.id || (u.profileData && u.profileData.clinicId === c.id)) || clinicAuthUsers.find(u => u.email?.toLowerCase().trim() === c.email?.toLowerCase().trim())
+        const targetId = cAuth?.id || `clinic_${c.id}`
+
         contacts.push({
-          id: `clinic_${c.id}`,
-          targetId: `clinic_${c.id}`,
+          id: targetId,
+          targetId: targetId,
           name: `${c.name} (Admin Channel)`,
           role: `Clinic Partner (${c.tier || 'Enterprise'})`,
           roleCategory: 'CLINIC_ADMIN',
@@ -250,6 +297,23 @@ const getChatContacts = async (req, res, next) => {
           clinicName: c.name,
           online: true,
           badgeColor: '#0E1B33'
+        })
+      })
+
+      salesUsers.forEach(s => {
+        const sAuth = salesAuthUsers.find(u => u.email?.toLowerCase().trim() === s.email?.toLowerCase().trim()) || salesAuthUsers.find(u => u.id === s.id)
+        const targetId = sAuth?.id || s.id
+
+        contacts.push({
+          id: targetId,
+          targetId: targetId,
+          name: s.name || 'Sales Executive',
+          role: s.role || 'Sales Executive',
+          roleCategory: 'SALES_EXECUTIVE',
+          avatar: s.avatar || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150',
+          clinicName: s.territory || 'ZealthOS Sales Team',
+          online: true,
+          badgeColor: '#F59E0B'
         })
       })
     }
@@ -314,11 +378,24 @@ const getConversationMessages = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Conversation ID required' })
     }
 
-    const messages = await prisma.$queryRawUnsafe(`
-      SELECT * FROM \`live_chat_messages\`
-      WHERE \`conversationId\` = ?
-      ORDER BY \`createdAt\` ASC
-    `, conversationId)
+    const parts = conversationId.split('__')
+    let messages = []
+    if (parts.length === 2) {
+      messages = await prisma.$queryRawUnsafe(`
+        SELECT * FROM \`live_chat_messages\`
+        WHERE \`conversationId\` = ? 
+           OR \`conversationId\` = ?
+           OR (\`senderId\` = ? AND \`recipientId\` = ?)
+           OR (\`senderId\` = ? AND \`recipientId\` = ?)
+        ORDER BY \`createdAt\` ASC
+      `, conversationId, `${parts[1]}__${parts[0]}`, parts[0], parts[1], parts[1], parts[0])
+    } else {
+      messages = await prisma.$queryRawUnsafe(`
+        SELECT * FROM \`live_chat_messages\`
+        WHERE \`conversationId\` = ?
+        ORDER BY \`createdAt\` ASC
+      `, conversationId)
+    }
 
     const formatted = (messages || []).map(m => ({
       id: m.id,
@@ -398,7 +475,7 @@ const sendLiveChatMessage = async (req, res, next) => {
     // 1. Broadcast real-time message to conversation room
     emitEvent('chat:message', newMsg, convId)
 
-    // 2. Broadcast direct push notification to recipient user room
+    // 2. Broadcast direct push notification to recipient and sender user rooms
     if (recipientId) {
       emitEvent('chat:incoming', newMsg, `room:user_${recipientId}`)
       emitEvent('notification:new', {
@@ -407,6 +484,7 @@ const sendLiveChatMessage = async (req, res, next) => {
         target: recipientRole || 'ALL'
       })
     }
+    emitEvent('chat:incoming', newMsg, `room:user_${user.id}`)
 
     res.json({ success: true, data: newMsg })
   } catch (err) {
